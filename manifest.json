@@ -1,0 +1,25 @@
+{
+  "name": "Basic OpenSCAD PWA",
+  "short_name": "BOSCPWA",
+  "description": "A browser-based OpenSCAD Progressive Web App.",
+  "id": "./index.html",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#222222",
+  "theme_color": "#007acc",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

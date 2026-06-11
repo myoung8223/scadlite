@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#222222">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="OpenSCAD">
+    <link rel="icon" type="image/x-icon" href="./favicon.ico">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Basic OpenSCAD PWA</title>
+
+    <script src="libs/three.min.js"></script>
+    <script src="libs/fflate.js"></script>
+    <script src="libs/3MFLoader.js"></script>
+    <script src="libs/OrbitControls.js"></script>
+    <script src="libs/STLExporter.js"></script>
+    <link rel="stylesheet" href="libs/prism-tomorrow.min.css">
+    <script type="module" src="app.js"></script>
+    
+<style>
+        .editor-error-line-glow { background-color: rgba(220, 53, 69, 0.25) !important; border-bottom: 1px dashed #ff4444; }
+        .gutter-error-flare { background-color: #dc3545 !important; color: #ffffff !important; padding: 2px 6px !important; border-radius: 3px; font-weight: bold; }
+        .bracket-match-glow { background-color: rgba(0, 122, 204, 0.45) !important; color: #00ffffff !important; font-weight: bold !important; border-bottom: 2px solid #00c3ff; }
+        .bracket-mismatch-glow { background-color: rgba(220, 53, 69, 0.4) !important; color: #ff8888 !important; font-weight: bold !important; border-bottom: 2px solid #ff3344; }
+        
+        * { box-sizing: border-box; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #222; color: #fff; overflow: hidden; }
+        
+        .app-container { display: flex; height: 100vh; width: 100vw; }
+        .left-panel { width: 50%; min-width: 15%; max-width: 85%; display: flex; flex-direction: column; }
+        .split-gutter { width: 8px; background: #111; cursor: col-resize; position: relative; z-index: 10; flex-shrink: 0; transition: background 0.15s ease; border-left: 1px solid #333; border-right: 1px solid #333; }
+        .split-gutter:hover, .split-gutter:active { background: #007acc; }
+        .console-gutter { height: 6px; background: #111; cursor: row-resize; flex-shrink: 0; border-top: 1px solid #333; border-bottom: 1px solid #333; transition: background 0.15s ease; }
+        .console-gutter:hover, .console-gutter:active { background: #007acc; }        
+        .right-panel { flex-grow: 1; height: 100vh; display: flex; flex-direction: column; background: #222; position: relative; overflow: hidden; }
+        
+        .toolbar { padding: 10px; background: #111; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        button { background: #007acc; color: white; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 0.9rem; }
+        button:hover { background: #0062a3; }
+        button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        .file-btn { background: #444; }
+        .file-btn:hover { background: #555; }
+        
+        .editor-wrapper { flex: 1 1 0; min-height: 0; display: flex; background: #1e1e1e; overflow: hidden; position: relative; }
+        #line-numbers { width: 55px; background: #1a1a1a; color: #5a5a5a; text-align: right; padding: 15px 8px 15px 0; font-family: 'Consolas', 'Monaco', 'Courier New', Courier, monospace; font-size: 14px; line-height: 1.5; user-select: none; overflow: hidden; border-right: 1px solid #2d2d2d; flex-shrink: 0; }
+        
+        #editor { flex-grow: 1; height: 100%; background: #1e1e1e; position: relative; overflow: auto; outline: none; padding: 15px !important; font-family: 'Consolas', 'Monaco', 'Courier New', Courier, monospace !important; line-height: 1.5; tab-size: 4; -moz-tab-size: 4; white-space: pre !important; word-break: normal !important; overflow-wrap: normal !important; }
+        #editor *, .codejar-editor, .codejar-editor * { font-family: 'Consolas', 'Monaco', 'Courier New', Courier, monospace !important; line-height: 1.5 !important; }
+        
+        .console-box { height: 150px; min-height: 60px; max-height: 80%; background: #000; border-top: 2px solid #444; font-family: monospace; font-size: 13px; color: #0f0; padding: 10px; overflow-y: auto; white-space: pre-wrap; flex-shrink: 0; }
+        
+        #viewer-3d { position: absolute; top: 0; bottom: 0; left: 0; right: 0; width: 100%; height: 100%; display: block; background-color: #222222; z-index: 1; }
+        #viewer-3d canvas { width: 100% !important; height: 100% !important; display: block; }
+        #viewer-3d { position: absolute; top: 0; bottom: 0; left: 0; right: 0; width: 100%; height: 100%; display: block; background-color: #222222; z-index: 1; }
+        #viewer-3d canvas { width: 100% !important; height: 100% !important; display: block; }
+        
+        /* 🚀 NEW: The loading overlay replacing the old .viewer-placeholder */
+        #placeholder-text { 
+            position: absolute; 
+            top: 0; left: 0; 
+            width: 100%; height: 100%; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            background-color: rgba(0, 0, 0, 0.6); 
+            color: #ffffff; 
+            font-size: 1.5rem; 
+            font-weight: bold; 
+            z-index: 10; 
+            pointer-events: none; 
+        }
+
+        .overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 1000; transition: opacity 0.15s ease; }
+
+        .overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: flex; justify-content: center; align-items: center; z-index: 1000; transition: opacity 0.15s ease; }
+        .overlay-content { background-color: #1e1e1e; border: 1px solid #333; color: #ffffff; padding: 24px; border-radius: 6px; width: 320px; position: relative; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); }
+        .hidden { display: none !important; }
+        .close-btn { position: absolute; top: 12px; right: 16px; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; padding: 0; line-height: 1; }
+        .close-btn:hover { color: #fff; }
+        .settings-group { margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+
+        /* 📊 Two Column Settings Layout */
+        /* .settings-columns-wrapper { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px; } */
+        /* @media (max-width: 600px) { .settings-columns-wrapper { grid-template-columns: 1fr; gap: 10px; } } */
+
+        /* 📊 Two Column Settings Layout with Vertical Divider */
+        .settings-columns-wrapper { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            margin-top: 15px; 
+        }
+        .settings-column:first-child {
+            padding-right: 20px;
+            border-right: 1px solid #444; /* The thin gray line */
+        }
+        .settings-column:last-child {
+            padding-left: 20px;
+        }
+        
+        /* Mobile Responsive adjustment */
+        @media (max-width: 600px) { 
+            .settings-columns-wrapper { 
+                grid-template-columns: 1fr; 
+            } 
+            .settings-column:first-child {
+                padding-right: 0;
+                border-right: none;
+                border-bottom: 1px solid #444; /* Swaps to horizontal on mobile */
+                padding-bottom: 15px;
+                margin-bottom: 15px;
+            }
+            .settings-column:last-child {
+                padding-left: 0;
+            }
+        }
+
+        /* 📘 Help / Cheat Sheet Overlay */
+        #help-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(25, 25, 25, 0.95); /* Dark, 95% opaque */
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            z-index: 20; /* Sits above everything in the right panel */
+            padding: 30px;
+            overflow-y: auto; /* Allows scrolling */
+            color: #eee;
+            transition: opacity 0.2s ease;
+        }
+        
+        .cheat-sheet-content {
+            max-width: 800px;
+            margin: 0 auto;
+            user-select: text; /* 🚀 GUARANTEES text can be highlighted and copied! */
+            -webkit-user-select: text;
+            line-height: 1.6;
+        }
+
+        .cheat-sheet-content code {
+            background-color: #111;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #00c3ff;
+            font-family: 'Consolas', monospace;
+            user-select: all; /* One click selects the whole code block! */
+        }
+    
+</style>
+</head>
+<body>
+
+    <div class="app-container">
+        <div class="left-panel" id="left-pane-container">
+            <div class="toolbar">
+                <input type="file" id="file-load" style="display:none;" accept=".scad">
+                <button class="file-btn" onclick="document.getElementById('file-load').click()">Load</button>
+                <button class="file-btn" id="btn-save">Save</button>
+                
+                <button id="btn-settings" class="file-btn">⚙️ Settings</button>
+                <input type="color" id="model-color" value="#3b82f6" style="display: none;">
+                
+                <button id="btn-preview" style="margin-left: auto; background: #ffc107; color: #000;">Preview</button>
+                <button id="btn-render" style="background: #28a745;" disabled>Render</button>
+                <button id="btn-export" style="background: #007acc;" disabled>Export</button>
+            </div>
+            
+            <div class="editor-wrapper">
+                <div id="line-numbers">1</div>
+                <div id="editor" class="language-scad" spellcheck="false"></div>
+            </div>
+
+            <div class="console-gutter" id="console-gutter"></div>
+            <!--div id="console" class="console-box"></div-->
+            
+            <div class="console-box" id="console">Basic OpenSCAD PWA - By: Mike Young
+with Extensive AI Assistance from Google Gemini & Claude</div>
+        </div>
+
+        <div class="split-gutter" id="panel-split-gutter"></div>
+
+        <div class="right-panel">
+            <div id="placeholder-text" style="display: none;"></div>
+            <div id="viewer-3d"></div>
+            
+            <div id="help-overlay" class="hidden">
+                <button id="close-help-btn" class="close-btn">&times;</button>
+                <div class="cheat-sheet-content">
+
+                    <h2>Help & OpenSCAD Cheat Sheet</h2>
+                    <p style="color: #ccc;">Welcome to Basic OpenSCAD PWA, a completely offline, browser-based OpenSCAD environment. Below you'll find quick keyboard shortcuts, compatibility notes, and the OpenSCAD Cheat Sheet, which contains a helpful OpenSCAD modeling syntax references.</p>
+                    
+                    <hr style="border-color: #444; margin: 25px 0;">
+                    
+                    <h3>Keyboard Shortcuts</h3>
+                    <ul style="list-style-type: none; padding-left: 0; line-height: 2; margin-bottom: 30px;">
+                        <li><code>[F1]</code> : Toggle Help and OpenSCAD Cheat Sheet Menu</li>
+                        <li><code>[Ctrl]</code> + <code>[,]</code> : Toggle Workspace Settings</li>
+                        <li><code>[F5]</code> or <code>[Ctrl]</code> + <code>[Enter]</code> : Preview Model (with ghost layers)</li>
+                        <li><code>[F6]</code> : Render Model (solid only, % ignored)</li>
+                        <li><code>[F7]</code> : Export to STL</li>
+                        <li><code>[Ctrl]</code> + <code>[S]</code> : Download Editor Cache as .scad Text File</li>
+                        <li><code>[Ctrl]</code> + <code>[O]</code> : Open .scad File</li>
+                    </ul>
+
+                    <div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+                        <strong style="color: #ffcc44;">Compatibility Note:</strong><br>
+                        <span style="font-size: 0.9rem; color: #ddd;">Imported STL files must be in ASCII format.  Binary-formatted STL files are not supported.  Note that OpenSCAD can be configured to export STLs in ASCII format in Preferences &rsaquo; Advanced &rsaquo; Export Features.</span>
+                    </div>
+                    
+                    <hr style="border-color: #444; margin: 25px 0;">
+                    
+                    <h2>OpenSCAD Cheat Sheet</h2>
+                    <p><em>Scroll down for syntax. Click to highlight, then copy and paste directly into the editor.</em></p>
+
+                    <!--div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+                        <strong style="color: #ffcc44;">Compatibility Note:</strong><br>
+                        <span style="font-size: 0.9rem; color: #ddd;">Because this PWA renders geometry using the robust STL format, rendering-specific modifiers like <code>color()</code> or transparency (<code>%</code>) will compile successfully, but will not be visible in the 3D preview window.</span>
+                    </div-->
+                    
+                    <hr style="border-color: #444;">
+                    
+                    <h3>Syntax & Includes</h3>
+                    <code>var = value;</code><br>
+                    <code>module name(...) { ... }</code><br>
+                    <code>name();</code><br>
+                    <code>function name(...) = ...;</code><br>
+                    <code>include &lt;filename.scad&gt;</code><br>
+                    <code>use &lt;filename.scad&gt;</code><br>
+                    <br>
+
+                    <h3>2D Shapes</h3>
+                    <code>circle(radius | d=diameter);</code><br>
+                    <code>square(size, center);</code><br>
+                    <code>square([width, height], center);</code><br>
+                    <code>polygon([points]);</code><br>
+                    <code>polygon([points], [paths]);</code><br>
+                    <code>text(text, size, font, halign, valign, spacing, direction, language, script);</code><br>
+                    <br>
+
+                    <h3>3D Shapes</h3>
+                    <code>sphere(radius | d=diameter);</code><br>
+                    <code>cube(size, center);</code><br>
+                    <code>cube([width, depth, height], center);</code><br>
+                    <code>cylinder(h, r|d, center);</code><br>
+                    <code>cylinder(h, r1|d1, r2|d2, center);</code><br>
+                    <code>polyhedron(points, faces, convexity);</code><br>
+                    <br>
+
+                    <h3>Transformations</h3>
+                    <code>translate([x, y, z])</code><br>
+                    <code>rotate([x, y, z])</code><br>
+                    <code>rotate(a, [x, y, z])</code><br>
+                    <code>scale([x, y, z])</code><br>
+                    <code>resize([x, y, z], auto)</code><br>
+                    <code>mirror([x, y, z])</code><br>
+                    <code>multmatrix(m)</code><br>
+                    <code>color("colorname", alpha)</code><br>
+                    <code>color([r, g, b, a])</code><br>
+                    <code>offset(r|delta, chamfer)</code><br>
+                    <code>hull()</code><br>
+                    <code>minkowski()</code><br>
+                    <br>
+
+                    <h3>Boolean Operations</h3>
+                    <code>union()</code><br>
+                    <code>difference()</code><br>
+                    <code>intersection()</code><br>
+                    <br>
+
+                    <h3>Extrusion & Projection</h3>
+                    <code>linear_extrude(height, center, convexity, twist, slices, scale, $fn, $fa, $fs)</code><br>
+                    <code>rotate_extrude(angle, convexity, $fn, $fa, $fs)</code><br>
+                    <code>projection(cut)</code><br>
+                    <code>surface(file, center, invert, convexity)</code><br>
+                    <br>
+
+                    <h3>Modifiers</h3>
+                    <code>*</code> Disable (ignores the subtree)<br>
+                    <code>!</code> Show only (ignores everything else)<br>
+                    <code>#</code> Highlight (draws in transparent pink)<br>
+                    <code>%</code> Transparent (draws in transparent gray)<br>
+                    <br>
+
+                    <h3>Loops & Conditionals</h3>
+                    <code>for (i = [start:end]) { ... }</code><br>
+                    <code>for (i = [start:step:end]) { ... }</code><br>
+                    <code>for (i = [...]) { ... }</code><br>
+                    <code>intersection_for(i = [start:end]) { ... }</code><br>
+                    <code>if (...) { ... } else { ... }</code><br>
+                    <br>
+
+                    <h3>List Comprehensions</h3>
+                    <code>[ for (i = range|list) i ]</code><br>
+                    <code>[ for (i = ...) if (condition(i)) i ]</code><br>
+                    <code>[ for (i = ...) let (a = ...) a ]</code><br>
+                    <br>
+
+                    <h3>Math & String Functions</h3>
+                    <code>abs(), sign(), sin(), cos(), tan(), acos(), asin(), atan(), atan2()</code><br>
+                    <code>floor(), round(), ceil(), ln(), len(), let(), log(), pow(), sqrt(), exp()</code><br>
+                    <code>rands(), min(), max(), norm(), cross(), concat(), lookup()</code><br>
+                    <code>str(), chr(), ord(), search(), version(), version_num(), parent_module()</code><br>
+                    <br>
+
+                    <h3>Other</h3>
+                    <code>echo(...)</code><br>
+                    <code>render(convexity)</code><br>
+                    <code>import("....ext")</code><br>
+                    <br>
+
+                    <h3>Special Variables</h3>
+                    <code>$fa</code> Minimum angle<br>
+                    <code>$fs</code> Minimum size<br>
+                    <code>$fn</code> Number of fragments<br>
+                    <code>$t</code> Animation step<br>
+                    <code>$vpr</code> Viewport rotation<br>
+                    <code>$vpt</code> Viewport translation<br>
+                    <code>$vpd</code> Viewport camera distance<br>
+                    <code>$children</code> Number of module children<br>
+                    
+                    <br><br><br>
+                    <p style="font-size: 0.8rem; color: #888;">
+                        * OpenSCAD Cheat Sheet content is sourced from the official <a href="https://openscad.org/documentation.html" style="color: #007acc;" target="_blank">OpenSCAD Documentation</a>.
+                    </p>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-overlay" class="overlay hidden">
+        <div class="overlay-content" style="width: 650px; max-width: 95vw;">
+            <button id="btn-close-settings" class="close-btn">&times;</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Workspace Settings</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group">
+                <label style="font-size: 0.9rem; color: #aaa;">Project Name:</label>
+                <input type="text" id="project-name-input" placeholder="untitled" 
+                    style="flex: 1; margin-left: 12px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; outline: none;">
+            </div>
+
+            <div class="settings-columns-wrapper">
+                <div class="settings-column">
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Editor Font Size:</label>
+                        <select id="editor-font-size-select" style="background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; outline: none; cursor: pointer;">
+                            <option value="12px">12px</option>
+                            <option value="14px">14px</option>
+                            <option value="16px">16px</option>
+                            <option value="18px">18px</option>
+                            <option value="20px">20px</option>
+                            <option value="22px">22px</option>
+                        </select>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Line Numbers:</label>
+                        <button id="btn-toggle-lines" class="file-btn" style="width: 120px; background: #28a745;">Enabled</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Console:</label>
+                        <button id="btn-toggle-console" class="file-btn" style="width: 120px; background: #28a745;">Visible</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Console Debugging:</label>
+                        <button id="btn-toggle-debug" class="file-btn" style="width: 120px; background: #dc3545;">Disabled</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Grid Layout:</label>
+                        <button id="btn-toggle-grid" class="file-btn" style="width: 120px; background: #28a745;">Visible</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Axis Lines:</label>
+                        <button id="btn-toggle-axes" class="file-btn" style="width: 120px; background: #28a745;">Visible</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Camera View:</label>
+                        <button id="btn-camera-reset" class="file-btn" style="width: 120px; background: #6c757d;">Reset View</button>
+                    </div>
+                </div>
+
+                <div class="settings-column">
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Model View:</label>
+                        <button id="btn-wireframe" class="file-btn" style="width: 120px;">Solid</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Model Color:</label>
+                        <button id="btn-color-trigger" class="file-btn" style="width: 120px; color: #ffffff; text-shadow: 0px 1px 2px rgba(0,0,0,0.6);">Change</button>
+                    </div>
+
+                    <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
+
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <button id="btn-open-fonts-menu" class="file-btn" style="width: 100%; background: #007acc;">🔤 Manage Custom Fonts</button>
+                        <button id="btn-open-stls-menu" class="file-btn" style="width: 100%; background: #007acc;">🌐 Manage STL Imports</button>
+                        <button id="btn-open-svgs-menu" class="file-btn" style="width: 100%; background: #007acc;">📐 Manage SVG Imports</button>
+                        <button id="btn-settings-cheat-sheet" class="file-btn" style="width: 100%; background: #fce84f; color: #000;">❓ Help & OpenSCAD Cheat Sheet</button>
+                        <button id="btn-open-licenses-menu" class="file-btn" style="width: 100%; background: #d97706;">📜 Credits & Licenses</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="fonts-overlay" class="overlay hidden">
+        <div class="overlay-content">
+            <button id="btn-close-fonts" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Fonts Manager</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+                <input type="file" id="font-upload" accept=".ttf,.otf" style="display:none;">
+                <button type="button" class="file-btn" onclick="document.getElementById('font-upload').click()" 
+                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install Font File (.ttf / .otf)</button>
+
+                <div id="custom-fonts-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="stls-overlay" class="overlay hidden">
+        <div class="overlay-content">
+            <button id="btn-close-stls" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">STL Manager</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+                <input type="file" id="stl-upload" accept=".stl" style="display:none;">
+                <button type="button" class="file-btn" onclick="document.getElementById('stl-upload').click()" 
+                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install STL File (.stl)</button>
+
+                <div id="custom-stls-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="svgs-overlay" class="overlay hidden">
+        <div class="overlay-content">
+            <button id="btn-close-svgs" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">SVG Manager</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+                <input type="file" id="svg-upload" accept=".svg" style="display:none;">
+                <button type="button" class="file-btn" onclick="document.getElementById('svg-upload').click()" 
+                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install SVG Vector File (.svg)</button>
+
+                <div id="custom-svgs-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
+                    </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="licenses-overlay" class="overlay hidden">
+        <div class="overlay-content" style="width: 650px; max-width: 95vw;">
+            <button id="btn-close-licenses" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Credits & Open Source Licenses</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group" style="flex-direction: column; align-items: flex-start; margin-top: 0;">
+                <pre id="licenses-text-container" style="width: 100%; box-sizing: border-box; background: #111; color: #aaa; font-family: monospace; font-size: 0.8rem; padding: 12px; border-radius: 4px; height: 320px; overflow-y: auto; white-space: pre-wrap; text-align: left; border: 1px solid #333; margin: 0;"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="libs/prism.min.js"></script>
+</body>
+</html>
