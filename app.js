@@ -925,13 +925,20 @@ jar.updateCode(`$fn = 25;   // number of segments set to 25
 linear_extrude(height = 4) {   // 3D text
 	text(
 		text = "SCADLite", 
-		size = 14, 
+		size = 18, 
 		font = "Liberation Sans:style=Bold", 
 		halign = "center", 
 		valign = "center"
 	);
 }
 
+translate([-100, 10, 0])
+rotate([0, 0, 270]) {
+	%cube(20);          // demo transparency modifier, %
+	cube(10);
+}
+
+color([0.8, 0.0, 0.0, 1])
 translate([-50, 40, 0])
 sphere(d=25);             // sphere
 
@@ -940,15 +947,27 @@ rotate_extrude(convexity = 10)   // torus
 	translate([14, 0, 0])
 		circle(r = 7);
 
+color([0.5, 0.4, 0.8, 1])
 translate([50, 40, 0])
 cylinder(d=25, h=20);    // cylinder
 
+color([0.7, 0.1, 0.7, 1])
 translate([-50, -40, 0])
 cube([25, 25, 25], center=true);   // cube
 
+color([0.0, 0.8, 0.0, 1])
 translate([0, -40, 0])	
-cylinder(d1=25, d2=0, h=20);   // conic cylinder
+cylinder(d1=25, d2=0, h=30);   // conic cylinder
 
+color([0.8, 0.8, 0.4, 1])
+translate([88, 0, 0])	
+difference() {                      // conic cylinder cup
+	cylinder(d1=15, d2=20, h=20);
+	translate([0, 0, 0.5])
+	cylinder(d1=14, d2=17, h=20);
+}
+
+color([0.8, 0.8, 0.8, 1])
 translate([50, -40, 0])
 hull() {                                   // hull example (D6 die)
 	translate([-8, -8, -8]) sphere(d=4);
@@ -956,7 +975,7 @@ hull() {                                   // hull example (D6 die)
 	translate([-8, 8, -8]) sphere(d=4);
 	translate([8, 8, -8]) sphere(d=4);
 	translate([-8, -8, 8]) sphere(d=4);
-	translate([8, -8, 8]) sphere(d=4);
+	#translate([8, -8, 8]) sphere(d=4);   // demo highlight modifier, #
 	translate([-8, 8, 8]) sphere(d=4);
 	translate([8, 8, 8]) sphere(d=4);
 }`);
