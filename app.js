@@ -2434,7 +2434,7 @@ Public License instead of this License.
 ===========================================================================
                                 MIT LICENSE
 ===========================================================================
-Applies to: CodeJar, Three.js, Scad2Stl, Prism.js
+Applies to: CodeJar, Three.js, Prism.js, fflate
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
