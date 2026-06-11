@@ -109,8 +109,8 @@ Whether installed as a PWA or loaded in the browser, the execution sequence init
 - **[Three.js (mrdoob)](https://github.com/mrdoob/three.js)** — Created by Ricardo Cabello (mrdoob), providing the high-performance WebGL 3D graphics pipeline, along with the essential `STLLoader` and `OrbitControls` companion modules.
 - **[CodeJar (Anton Medvedev)](https://github.com/antonmedv/codejar)** — An embeddable, lightweight code editor for the browser, driving the application's core text editing, native block indentation, and multi-line formatting engine.
 - **[Prism.js](https://github.com/PrismJS/prism)** — A robust, highly extensible syntax highlighting library used to provide real-time code tokenization and visual formatting for OpenSCAD scripts.
-- **[fflate (101010-coder)](https://github.com/101010-coder/fflate)** — A high-performance, ultra-lightweight compression library utilized in-memory to synchronously extract compiled 3MF web archive packages for the rendering viewport.
+- **[fflate (Arjun Barrett)](https://github.com/101arrowz/fflate)** — A high-performance, ultra-lightweight compression library utilized in-memory to synchronously extract compiled 3MF web archive packages for the rendering viewport.
 
 ## License
 
-This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)** - see the [LICENSE](LICENSE) file for details. This license is required due to the upstream dependency on the GPL-licensed OpenSCAD WebAssembly engine.
+This project is licensed under the **GNU General Public License v2.0 (GPL-2.0)** - see the [LICENSE](LICENSE) file for details. This license is required due to the upstream dependency on the GPL-licensed OpenSCAD WebAssembly engine.
