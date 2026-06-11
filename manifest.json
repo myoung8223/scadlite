@@ -1,7 +1,7 @@
 {
-  "name": "Basic OpenSCAD PWA",
-  "short_name": "BOSCPWA",
-  "description": "A browser-based OpenSCAD Progressive Web App.",
+  "name": "SCADLite",
+  "short_name": "SCADLite",
+  "description": "A lite, browser-based OpenSCAD solution.",
   "id": "./index.html",
   "start_url": "./index.html",
   "display": "standalone",
