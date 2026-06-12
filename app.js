@@ -1522,7 +1522,8 @@ btnExport.addEventListener('click', () => {
         // The live mesh has rotation.x = -PI/2 applied to correct OpenSCAD→Three.js axes.
         // For STL export we need to undo that and apply the correct OpenSCAD→slicer transform.
         // OpenSCAD uses Z-up, slicers use Z-up, so we just need to undo the Three.js display rotation.
-        exportClone.rotation.set(0, 0, -Math.PI / 2);
+        //exportClone.rotation.set(0, 0, -Math.PI / 2);
+		exportClone.rotation.set(0, 0, 0);
         exportClone.updateMatrix();
         exportClone.updateMatrixWorld(true);
 
