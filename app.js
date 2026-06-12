@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "243"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "244"; // <-- Incremented for SVG Import Database & Grid Layout
 
 // 🍯 Import standalone, offline-ready CodeJar framework
 import { CodeJar } from './libs/codejar.min.js';
@@ -42,6 +42,8 @@ const stlCache = {};
 const svgCache = {}; // 📁 NEW: Caches SVG files in memory
 let rawEditorCode = "";
 let consoleDebugging = localStorage.getItem('openscad_console_debug') === 'enabled';
+let bracketMatchingEnabled = localStorage.getItem('openscad_bracket_matching') !== 'disabled';
+let lineHighlightingEnabled = localStorage.getItem('openscad_line_highlight') !== 'disabled';
 
 // ==========================================================================
 // 🗄️ INDEXEDDB PERSISTENT STORAGE LAYERS
@@ -191,10 +193,12 @@ const jar = CodeJar(
 );
 
 if (editorElement) {
-    editorElement.addEventListener('click', () => applyInlineBracketMatching(editorElement));
+    editorElement.addEventListener('click', () => {
+        if (bracketMatchingEnabled) applyInlineBracketMatching(editorElement);
+    });
     
     editorElement.addEventListener('keyup', (e) => {
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
+        if (bracketMatchingEnabled && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown'].includes(e.key)) {
             applyInlineBracketMatching(editorElement);
         }
     });
@@ -501,6 +505,112 @@ if (toggleDebugBtn) {
     };
     applyDebugLayout(consoleDebugging);
     toggleDebugBtn.addEventListener('click', () => applyDebugLayout(!consoleDebugging));
+}
+
+// ==========================================================================
+// 💡 BRACKET MATCHING TOGGLE
+// ==========================================================================
+const toggleBracketBtn = document.getElementById('btn-toggle-bracket');
+if (toggleBracketBtn) {
+    const applyBracketLayout = (enabled) => {
+        bracketMatchingEnabled = enabled;
+        localStorage.setItem('openscad_bracket_matching', enabled ? 'enabled' : 'disabled');
+        toggleBracketBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+        toggleBracketBtn.style.backgroundColor = enabled ? '#28a745' : '#dc3545';
+        if (!enabled && editorElement) {
+            editorElement.querySelectorAll('.bracket-match-glow, .bracket-mismatch-glow')
+                .forEach(span => span.classList.remove('bracket-match-glow', 'bracket-mismatch-glow'));
+        }
+    };
+    applyBracketLayout(bracketMatchingEnabled);
+    toggleBracketBtn.addEventListener('click', () => applyBracketLayout(!bracketMatchingEnabled));
+}
+
+// ==========================================================================
+// ✏️ LINE HIGHLIGHTING TOGGLE
+// ==========================================================================
+const toggleLineHighlightBtn = document.getElementById('btn-toggle-line-highlight');
+
+// Inject the active line highlight style once
+const lineHighlightStyle = document.createElement('style');
+lineHighlightStyle.id = 'line-highlight-style';
+lineHighlightStyle.textContent = `.active-line-highlight { background-color: rgba(255, 255, 255, 0.04) !important; outline: 1px solid rgba(255,255,255,0.06); }`;
+document.head.appendChild(lineHighlightStyle);
+
+let lastHighlightedLine = null;
+
+function applyLineHighlight() {
+    if (!lineHighlightingEnabled || !editorElement) return;
+
+    if (lastHighlightedLine) {
+        lastHighlightedLine.classList.remove('active-line-highlight');
+        lastHighlightedLine = null;
+    }
+
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+
+    let cursorIndex = 0;
+    const walker = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+        if (node === range.startContainer) { cursorIndex += range.startOffset; break; }
+        cursorIndex += node.textContent.length;
+        node = walker.nextNode();
+    }
+
+    const text = editorElement.textContent;
+    const lineStart = text.lastIndexOf('\n', cursorIndex - 1) + 1;
+
+    let absOffset = 0;
+    const walker2 = document.createTreeWalker(editorElement, NodeFilter.SHOW_TEXT);
+    let textNode = walker2.nextNode();
+    while (textNode) {
+        const nodeLen = textNode.textContent.length;
+        if (lineStart >= absOffset && lineStart < absOffset + nodeLen) {
+            let el = textNode.parentNode;
+            while (el && el !== editorElement && el.parentNode !== editorElement) {
+                el = el.parentNode;
+            }
+            if (el && el !== editorElement) {
+                el.classList.add('active-line-highlight');
+                lastHighlightedLine = el;
+            }
+            break;
+        }
+        absOffset += nodeLen;
+        textNode = walker2.nextNode();
+    }
+}
+
+function clearLineHighlight() {
+    if (lastHighlightedLine) {
+        lastHighlightedLine.classList.remove('active-line-highlight');
+        lastHighlightedLine = null;
+    }
+}
+
+if (editorElement) {
+    editorElement.addEventListener('click', applyLineHighlight);
+    editorElement.addEventListener('keyup', (e) => {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End',
+             'PageUp', 'PageDown'].includes(e.key)) {
+            applyLineHighlight();
+        }
+    });
+}
+
+if (toggleLineHighlightBtn) {
+    const applyLineHighlightLayout = (enabled) => {
+        lineHighlightingEnabled = enabled;
+        localStorage.setItem('openscad_line_highlight', enabled ? 'enabled' : 'disabled');
+        toggleLineHighlightBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+        toggleLineHighlightBtn.style.backgroundColor = enabled ? '#28a745' : '#dc3545';
+        if (!enabled) clearLineHighlight();
+    };
+    applyLineHighlightLayout(lineHighlightingEnabled);
+    toggleLineHighlightBtn.addEventListener('click', () => applyLineHighlightLayout(!lineHighlightingEnabled));
 }
 
 // ==========================================================================
