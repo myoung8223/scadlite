@@ -1509,32 +1509,26 @@ btnExport.addEventListener('click', () => {
         
         const exporter = new THREE.STLExporter();
         
-        // Clone the mesh group
+        // Clone the mesh group and deep-clone geometries to avoid modifying the live preview
         const exportClone = currentMesh.clone();
-        
-        // Deep clone geometries to avoid modifying the live preview
         exportClone.traverse((child) => {
             if (child.isMesh && child.geometry) {
                 child.geometry = child.geometry.clone();
             }
         });
 
-        // The live mesh has rotation.x = -PI/2 applied to correct OpenSCAD→Three.js axes.
-        // For STL export we need to undo that and apply the correct OpenSCAD→slicer transform.
-        // OpenSCAD uses Z-up, slicers use Z-up, so we just need to undo the Three.js display rotation.
-        //exportClone.rotation.set(0, 0, -Math.PI / 2);
-		exportClone.rotation.set(0, 0, 0);
+        // Reset rotation — undoes the Three.js display correction (rotation.x = -PI/2)
+        // leaving geometry in OpenSCAD's native Z-up orientation, which slicers expect
+        exportClone.rotation.set(0, 0, 0);
         exportClone.updateMatrix();
         exportClone.updateMatrixWorld(true);
 
         logToConsole(`📦 Packaging geometry into binary STL...`);
-        
         const stlResult = exporter.parse(exportClone, { binary: true });
         
         const stlBlob = new Blob([stlResult], { type: 'application/octet-stream' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(stlBlob);
-        
         const projectName = projectNameInput.value.trim() || "openscad_model";
         link.download = `${projectName}.stl`;
         link.click();
