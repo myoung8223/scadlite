@@ -568,8 +568,11 @@ function applyLineHighlight() {
             cursorIndex += n.textContent.length;
             n = tw.nextNode();
         }
-        const lineNumber = text.substring(0, cursorIndex).split('\n').length - 1;
-        topOffset = lineNumber * lineHeight;
+        //const lineNumber = text.substring(0, cursorIndex).split('\n').length - 1;
+        //topOffset = lineNumber * lineHeight;
+		const lineNumber = text.substring(0, cursorIndex).split('\n').length - 1;
+        const editorPaddingTop = parseFloat(getComputedStyle(editorElement).paddingTop) || 15;
+        topOffset = lineNumber * lineHeight + editorPaddingTop;
     } else {
         topOffset = cursorRect.top - editorRect.top + editorElement.scrollTop;
     }
