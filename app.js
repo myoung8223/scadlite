@@ -212,6 +212,18 @@ if (editorElement) {
             });
             editorElement.dispatchEvent(fakeRedoEvent);
         }
+
+        if (event.key === 'Delete') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            const { start, end } = getSelectionCharacterOffsetWithin(editorElement);
+            if (start !== end) return;
+            const value = jar.toString();
+            if (start >= value.length) return;
+            const newCode = value.substring(0, start) + value.substring(start + 1);
+            jar.updateCode(newCode);
+            setSelectionCharacterOffsetWithin(editorElement, start, start);
+        }
     });
 }
 
