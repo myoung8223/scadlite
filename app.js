@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "287"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "288"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -509,6 +509,19 @@ function logToConsole(message) {
     consoleBox.scrollTop = consoleBox.scrollHeight; 
 }
 
+// ---- Model Link encode/decode: fflate gzip → base64url, for the URL hash ----
+function encodeModel(text) {
+    const compressed = fflate.gzipSync(fflate.strToU8(text));
+    let b64 = btoa(String.fromCharCode(...compressed));
+    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeModel(str) {
+    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    return fflate.strFromU8(fflate.gunzipSync(bytes));
+}
+
 // ---- FILE OPERATIONS ----
 btnSave.addEventListener('click', () => {
     const blob = new Blob([jar.toString()], { type: 'text/plain' });
@@ -707,7 +720,23 @@ if (btnSettingsCheatSheet && settingsOverlay && helpOverlay) {
 async function initOpenSCAD() {
     logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
     logToConsole('System ready. Instantiating WASM...');
-    
+
+	// 🔗 Shared link: if the URL carries a model, load it into the LINK workspace
+    // (never main), make link active, and let the normal loader show it.
+    if (window.location.hash.startsWith('#scad=')) {
+        try {
+            const encoded = window.location.hash.slice('#scad='.length);
+            const decoded = decodeModel(encoded);
+            if (decoded && decoded.trim() !== "") {
+                setWorkspaceCode('link', decoded);
+                localStorage.setItem(WS_ACTIVE_KEY, 'link');
+                logToConsole('🔗 Shared model loaded into Link Sharing workspace.');
+            }
+        } catch (err) {
+            logToConsole('🔗 Could not decode shared model link; ignoring.');
+        }
+    }
+	
 	// One-time migration: fold any legacy single-key cache into 'main'.
     const legacy = localStorage.getItem('openscad_editor_cache');
     if (legacy && legacy.trim() !== "" && !localStorage.getItem(WS_MAIN_KEY)) {
