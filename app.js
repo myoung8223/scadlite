@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "290"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "291"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -811,6 +811,7 @@ async function initOpenSCAD() {
 	            const hasMeaningfulCache = cached && cached.trim() !== "" && cached !== decoded;
 	
 	            let proceed = true;
+				/*
 	            if (hasMeaningfulCache) {
 					logToConsole('🔗 hasMeaningfulCache = ' + hasMeaningfulCache);
 	                proceed = confirm(
@@ -819,13 +820,14 @@ async function initOpenSCAD() {
 	                    "(Your current work will be kept as a backup.)"
 	                );
 	            }
+				*/
 	
 	            if (proceed) {
 	                // Stash current work before clobbering, so it's recoverable.
 	                if (hasMeaningfulCache) {
 	                    localStorage.setItem('openscad_editor_backup', cached);
 	                    localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
-	                    logToConsole('🔗 Previous work backed up before loading shared model.');
+	                    logToConsole('🔗 Previous work backed-up before loading shared model.');
 						//updateBackupButtonsVisibility();
 						if (typeof updateBackupButtonsVisibility === 'function') updateBackupButtonsVisibility();
 	                }
