@@ -760,6 +760,7 @@ hull() {                                 // hull example (D6 die)
 }`);
         
     }
+	}
 	
     if (typeof triggerLineUpdate === 'function') triggerLineUpdate();
     
