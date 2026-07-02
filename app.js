@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "284"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "285"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -40,9 +40,36 @@ const fontCache = {};
 const stlCache = {}; 
 const svgCache = {}; // 📁 NEW: Caches SVG files in memory
 let rawEditorCode = "";
+
+// ==========================================================================
+// 🗂️ WORKSPACES — two independent, persisted SCAD workspaces: 'main' and 'link'.
+// 'main' is the user's primary work (never clobbered by shared links).
+// 'link' is the link-sharing workspace (safe to clobber; holds URL-loaded models).
+// ==========================================================================
+const WS_MAIN_KEY = 'openscad_ws_main';
+const WS_LINK_KEY = 'openscad_ws_link';
+const WS_ACTIVE_KEY = 'openscad_ws_active';   // 'main' | 'link'
+
+function getActiveWorkspace() {
+    return localStorage.getItem(WS_ACTIVE_KEY) === 'link' ? 'link' : 'main';
+}
+function wsStorageKey(ws) { return ws === 'link' ? WS_LINK_KEY : WS_MAIN_KEY; }
+
+// Read/write a workspace's stored code (independent of what's shown in the editor).
+function getWorkspaceCode(ws) { return localStorage.getItem(wsStorageKey(ws)) || ""; }
+function setWorkspaceCode(ws, code) { localStorage.setItem(wsStorageKey(ws), code); }
+
+// Save whatever's currently in the editor into the active workspace's store.
+function saveActiveWorkspace() {
+    if (!workspaceInitialized) return;   // guard against premature writes during init
+    setWorkspaceCode(getActiveWorkspace(), jar.toString());
+}
+
 let consoleDebugging = localStorage.getItem('openscad_console_debug') === 'enabled';
 let bracketMatchingEnabled = localStorage.getItem('openscad_bracket_matching') !== 'disabled';
 let lineHighlightingEnabled = localStorage.getItem('openscad_line_highlight') !== 'disabled';
+
+
 
 // ==========================================================================
 // 🗄️ INDEXEDDB PERSISTENT STORAGE LAYERS
@@ -180,9 +207,9 @@ const jar = (() => {
     cmView = window.scadCM.newEditor(editorElement, "", {
         // onChange fires on every doc change, AFTER CM6 commits it — so
         // rawEditorCode is always current (no rAF needed anymore).
-        onChange: (view) => {
+		onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
-            localStorage.setItem('openscad_editor_cache', rawEditorCode);
+            saveActiveWorkspace();
         }
     });
 
@@ -199,6 +226,24 @@ const jar = (() => {
         onUpdate() {}
     };
 })();
+
+// Switch the active workspace: save current editor into the old workspace,
+// load the target workspace's code into the editor, persist the choice, preview.
+function switchWorkspace(target) {
+    if (target !== 'main' && target !== 'link') return;
+    const current = getActiveWorkspace();
+    if (current === target) return;
+    // Save what's on screen into the workspace we're leaving.
+    setWorkspaceCode(current, jar.toString());
+    // Make target active and load its code.
+    localStorage.setItem(WS_ACTIVE_KEY, target);
+    jar.updateCode(getWorkspaceCode(target));
+    logToConsole(`🗂️ Switched to ${target === 'link' ? 'Link Sharing' : 'Main'} workspace.`);
+    // Preview the newly-loaded workspace.
+    const previewBtn = document.getElementById('btn-preview');
+    if (previewBtn) previewBtn.click();
+    if (typeof updateWorkspaceButtons === 'function') updateWorkspaceButtons();
+}
 
 // ==========================================================================
 // 🛠️ COMPILATION ERROR HIGHLIGHTING (CM6 — via bundle's lint diagnostics)
@@ -663,10 +708,17 @@ async function initOpenSCAD() {
     logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
     logToConsole('System ready. Instantiating WASM...');
     
-    const savedCode = localStorage.getItem('openscad_editor_cache');
-    if (savedCode && savedCode.trim() !== "") {
-        jar.updateCode(savedCode); 
-    } else {
+	// One-time migration: fold any legacy single-key cache into 'main'.
+    const legacy = localStorage.getItem('openscad_editor_cache');
+    if (legacy && legacy.trim() !== "" && !localStorage.getItem(WS_MAIN_KEY)) {
+        setWorkspaceCode('main', legacy);
+    }
+
+    const activeWs = getActiveWorkspace();
+    const activeCode = getWorkspaceCode(activeWs);
+    if (activeCode && activeCode.trim() !== "") {
+        jar.updateCode(activeCode);
+    } else if (activeWs === 'main') {
         //jar.updateCode(`linear_extrude(height = 4) {\n\ttext(\n\t\ttext = "Hello, world!", \n\t\tsize = 14, \n\t\tfont = "Liberation Sans:style=Bold", \n\t\thalign = "center", \n\t\tvalign = "center"\n\t);\n}`); 
 
 jar.updateCode(`$fn = 25;   // number of segments set to 25
@@ -729,7 +781,10 @@ hull() {                                 // hull example (D6 die)
 	translate([8, 8, 8]) sphere(d=4);
 }`);
         
+    } else {
+        jar.updateCode("");   // active workspace (link) is empty → blank editor
     }
+	
     if (typeof triggerLineUpdate === 'function') triggerLineUpdate();
     
 	try {
