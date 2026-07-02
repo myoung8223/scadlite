@@ -1,14 +1,14 @@
 # SCADLite
 
 <a href="https://raw.githubusercontent.com/myoung8223/scadlite/refs/heads/main/title.png" target="_blank">
-<img alt="image" src="https://github.com/myoung8223/scadlite2/blob/main/title_20260628.png" />
+<img alt="image" src="https://github.com/myoung8223/scadlite/blob/main/title_20260628.png" />
 </a>
 
 SCADLite is a lightweight, browser-optimized Progressive Web App (PWA) that pairs a feature-rich development workspace with a high-performance 3D viewport. It compiles and renders OpenSCAD geometry entirely client-side using WebAssembly (WASM) and functions 100% offline once installed. Write, preview, and iterate on 3D models instantly without local desktop installations. 
 
 The core purpose of this project is to make OpenSCAD design fully accessible on web-based platforms, especially ChromeOS. OpenSCAD has tremendous potential in K-12 education, a domain currently dominated by Chromebooks in the United States. This app gives students and educators a zero-setup, privacy-first, free and open source, OpenSCAD design environment.
 
-👉 **[Link to GitHub Pages-hosted PWA](https://myoung8223.github.io/scadlite2)**
+👉 **[Link to GitHub Pages-hosted PWA](https://myoung8223.github.io/scadlite)**
 
 ## Current Features
 
