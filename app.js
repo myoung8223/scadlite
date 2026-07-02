@@ -301,6 +301,45 @@ if (consoleBox && toggleConsoleBtn) {
 }
 
 // ==========================================================================
+// 💾 BACKUP RESTORE / DISCARD (appears only when a clobber-backup exists)
+// ==========================================================================
+const btnRestoreBackup = document.getElementById('btn-restore-backup');
+const btnDiscardBackup = document.getElementById('btn-discard-backup');
+
+function updateBackupButtonsVisibility() {
+    const hasBackup = !!localStorage.getItem('openscad_editor_backup');
+    const disp = hasBackup ? 'inline-block' : 'none';
+    if (btnRestoreBackup) btnRestoreBackup.style.display = disp;
+    if (btnDiscardBackup) btnDiscardBackup.style.display = disp;
+}
+
+if (btnRestoreBackup) {
+    btnRestoreBackup.addEventListener('click', () => {
+        const backup = localStorage.getItem('openscad_editor_backup');
+        if (backup === null) { updateBackupButtonsVisibility(); return; }
+        // Swap: current editor content becomes the new backup; backup loads into editor.
+        const current = jar.toString();
+        localStorage.setItem('openscad_editor_backup', current);
+        localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
+        jar.updateCode(backup);
+        logToConsole('💾 Swapped in backup (your previous content is now the backup).');
+        updateBackupButtonsVisibility();
+    });
+}
+
+if (btnDiscardBackup) {
+    btnDiscardBackup.addEventListener('click', () => {
+        localStorage.removeItem('openscad_editor_backup');
+        localStorage.removeItem('openscad_editor_backup_time');
+        logToConsole('💾 Backup discarded.');
+        updateBackupButtonsVisibility();
+    });
+}
+
+// Show/hide on startup based on whether a backup exists.
+updateBackupButtonsVisibility();
+
+// ==========================================================================
 // 🔗 MODEL LINK TOGGLE + UPDATE LINK BUTTON
 // ==========================================================================
 const btnToggleModelLink = document.getElementById('btn-toggle-model-link');
@@ -784,6 +823,8 @@ async function initOpenSCAD() {
 	                    localStorage.setItem('openscad_editor_backup', cached);
 	                    localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
 	                    logToConsole('🔗 Previous work backed up before loading shared model.');
+						//updateBackupButtonsVisibility();
+						if (typeof updateBackupButtonsVisibility === 'function') updateBackupButtonsVisibility();
 	                }
 	                jar.updateCode(decoded);
 	                loadedFromUrl = true;
