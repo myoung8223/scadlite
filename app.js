@@ -324,6 +324,9 @@ if (btnRestoreBackup) {
         jar.updateCode(backup);
         logToConsole('💾 Swapped in backup (your previous content is now the backup).');
         updateBackupButtonsVisibility();
+        // Trigger a preview of the restored content.
+        const previewBtn = document.getElementById('btn-preview');
+        if (previewBtn) previewBtn.click();		
     });
 }
 
