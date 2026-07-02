@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "294"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "295"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -342,10 +342,10 @@ function refreshUpdateLinkState() {
     if (!btnUpdateLink) return;
     const isFresh = (jar.toString() === currentUrlModel());
     if (isFresh) {
-        btnUpdateLink.textContent = 'Link<br>Updated';
+        btnUpdateLink.innerHTML = 'Link<br>Updated';
         btnUpdateLink.style.background = '#6c757d';   // gray
     } else {
-        btnUpdateLink.textContent = 'Update<br>Link';
+        btnUpdateLink.innerHTML = 'Update<br>Link';
         btnUpdateLink.style.background = '#8b5cf6';    // purple
     }
 }
