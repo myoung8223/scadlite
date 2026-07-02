@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "290"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "291"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -254,6 +254,83 @@ function switchWorkspace(target) {
 // ==========================================================================
 const btnUpdateLink = document.getElementById('btn-update-link');
 
+// ==========================================================================
+// 🔗 LINK SHARING — enable/disable state + Switch/Disable buttons + visibility.
+// "Active" = user enabled it, OR the link workspace has data.
+// ==========================================================================
+const btnToggleLinkSharing = document.getElementById('btn-toggle-link-sharing');
+const btnSwitchWorkspace   = document.getElementById('btn-switch-workspace');
+const btnDisableLinkSharing = document.getElementById('btn-disable-link-sharing');
+
+let linkSharingEnabled = localStorage.getItem('openscad_link_sharing') === 'enabled';
+
+function linkWorkspaceHasData() {
+    const c = getWorkspaceCode('link');
+    return c && c.trim() !== "";
+}
+function linkSharingActive() {
+    //return linkSharingEnabled || linkWorkspaceHasData();
+	return linkSharingEnabled;
+}
+
+// Central function: sets every link-sharing-related button's visibility + labels.
+function updateWorkspaceButtons() {
+    const active = linkSharingActive();
+    const hasData = linkWorkspaceHasData();
+    const onLink = getActiveWorkspace() === 'link';
+
+    // Update Link: visible when link sharing is active.
+    if (btnUpdateLink) {
+        btnUpdateLink.style.display = active ? 'inline-block' : 'none';
+        if (active) refreshUpdateLinkState();
+    }
+    // Switch + Disable: visible when active AND link workspace has data.
+    const showWsBtns = active && hasData;
+    if (btnSwitchWorkspace) {
+        btnSwitchWorkspace.style.display = showWsBtns ? 'inline-block' : 'none';
+        btnSwitchWorkspace.innerHTML = onLink ? 'Switch to<br>Main' : 'Switch to<br>Link Sharing';
+    }
+    if (btnDisableLinkSharing) {
+        btnDisableLinkSharing.style.display = showWsBtns ? 'inline-block' : 'none';
+    }
+    // Settings toggle label/color.
+    if (btnToggleLinkSharing) {
+        btnToggleLinkSharing.textContent = linkSharingEnabled ? 'Enabled' : 'Disabled';
+        btnToggleLinkSharing.style.backgroundColor = linkSharingEnabled ? '#28a745' : '#dc3545';
+    }
+}
+
+// Settings toggle: enable/disable link sharing.
+if (btnToggleLinkSharing) {
+    btnToggleLinkSharing.addEventListener('click', () => {
+        linkSharingEnabled = !linkSharingEnabled;
+        localStorage.setItem('openscad_link_sharing', linkSharingEnabled ? 'enabled' : 'disabled');
+        // Disabling while viewing the link workspace forces a switch back to main.
+        if (!linkSharingEnabled && getActiveWorkspace() === 'link') {
+            switchWorkspace('main');
+        }
+        updateWorkspaceButtons();
+    });
+}
+
+// Switch button: toggle between main and link workspaces.
+if (btnSwitchWorkspace) {
+    btnSwitchWorkspace.addEventListener('click', () => {
+        switchWorkspace(getActiveWorkspace() === 'link' ? 'main' : 'link');
+        updateWorkspaceButtons();
+    });
+}
+
+// Disable button (toolbar): same as disabling in settings — keep data, hide buttons.
+if (btnDisableLinkSharing) {
+    btnDisableLinkSharing.addEventListener('click', () => {
+        linkSharingEnabled = false;
+        localStorage.setItem('openscad_link_sharing', 'disabled');
+        if (getActiveWorkspace() === 'link') switchWorkspace('main');
+        updateWorkspaceButtons();
+    });
+}
+
 // What's currently encoded in the URL hash (decoded), or null if none.
 function currentUrlModel() {
     if (!window.location.hash.startsWith('#scad=')) return null;
@@ -295,6 +372,7 @@ if (btnUpdateLink) {
                 logToConsole('🔗 Link updated in address bar (clipboard unavailable).');
             }
             refreshUpdateLinkState();
+			updateWorkspaceButtons();
         } catch (err) {
             logToConsole('🔗 Could not generate link: ' + (err.message || err));
         }
@@ -785,6 +863,8 @@ async function initOpenSCAD() {
             const decoded = decodeModel(encoded);
             if (decoded && decoded.trim() !== "") {
                 setWorkspaceCode('link', decoded);
+				localStorage.setItem('openscad_link_sharing', 'enabled');
+				linkSharingEnabled = true;
                 localStorage.setItem(WS_ACTIVE_KEY, 'link');
                 logToConsole('🔗 Shared model loaded into Link Sharing workspace.');
             }
@@ -915,6 +995,7 @@ hull() {                                 // hull example (D6 die)
         btnPreview.disabled = false;
         btnRender.disabled = false;
         btnPreview.click();
+		if (typeof updateWorkspaceButtons === 'function') updateWorkspaceButtons();
 		
     } catch (err) { logToConsole(`Failed to initialize OpenSCAD: ${err.message}`); }
 }
