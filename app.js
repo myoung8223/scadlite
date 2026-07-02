@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "287"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "288"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -177,12 +177,28 @@ async function deletePersistentSvg(filename) {
 // 🍯 INITIALIZE CODEMIRROR 6 (custom SCADLite bundle — window.scadCM)
 let cmView = null;
 const jar = (() => {
-    cmView = window.scadCM.newEditor(editorElement, "", {
+
+	/*
+	cmView = window.scadCM.newEditor(editorElement, "", {
         // onChange fires on every doc change, AFTER CM6 commits it — so
         // rawEditorCode is always current (no rAF needed anymore).
 		onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
             localStorage.setItem('openscad_editor_cache', rawEditorCode);
+            if (typeof refreshUpdateLinkColor === 'function') refreshUpdateLinkColor();
+        }
+    });
+	*/
+
+    cmView = window.scadCM.newEditor(editorElement, "", {
+        // onChange fires on every doc change, AFTER CM6 commits it — so
+        // rawEditorCode is always current (no rAF needed anymore).
+        onChange: (view) => {
+            rawEditorCode = view.state.doc.toString();
+            // 🛡️ Guard against premature cache wipes during initialization
+            if (workspaceInitialized) {
+                localStorage.setItem('openscad_editor_cache', rawEditorCode);
+            }
             if (typeof refreshUpdateLinkColor === 'function') refreshUpdateLinkColor();
         }
     });
@@ -738,11 +754,6 @@ if (btnSettingsCheatSheet && settingsOverlay && helpOverlay) {
 async function initOpenSCAD() {
     logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
     logToConsole('System ready. Instantiating WASM...');
-
-
-
-
-
 
 	// 🔗 Model Link: if the URL hash carries a shared model, it wins over cache/default —
 	// but if the user has meaningful cached work that differs, confirm before clobbering.
