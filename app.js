@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "289"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "290"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -210,6 +210,7 @@ const jar = (() => {
 		onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
             saveActiveWorkspace();
+            if (typeof refreshUpdateLinkState === 'function') refreshUpdateLinkState();
         }
     });
 
@@ -238,11 +239,66 @@ function switchWorkspace(target) {
     // Make target active and load its code.
     localStorage.setItem(WS_ACTIVE_KEY, target);
     jar.updateCode(getWorkspaceCode(target));
+	if (typeof refreshUpdateLinkState === 'function') refreshUpdateLinkState();
     logToConsole(`🗂️ Switched to ${target === 'link' ? 'Link Sharing' : 'Main'} workspace.`);
     // Preview the newly-loaded workspace.
     const previewBtn = document.getElementById('btn-preview');
     if (previewBtn) previewBtn.click();
     if (typeof updateWorkspaceButtons === 'function') updateWorkspaceButtons();
+}
+
+// ==========================================================================
+// 🔗 UPDATE LINK BUTTON — encodes active workspace into URL, copies to clipboard.
+// Purple "Update Link" = stale (active content differs from URL);
+// gray "Link Updated" = fresh (URL matches active content).
+// ==========================================================================
+const btnUpdateLink = document.getElementById('btn-update-link');
+
+// What's currently encoded in the URL hash (decoded), or null if none.
+function currentUrlModel() {
+    if (!window.location.hash.startsWith('#scad=')) return null;
+    try { return decodeModel(window.location.hash.slice('#scad='.length)); }
+    catch (e) { return null; }
+}
+
+function refreshUpdateLinkState() {
+    if (!btnUpdateLink) return;
+    const isFresh = (jar.toString() === currentUrlModel());
+    if (isFresh) {
+        btnUpdateLink.textContent = 'Link Updated';
+        btnUpdateLink.style.background = '#6c757d';   // gray
+    } else {
+        btnUpdateLink.textContent = 'Update Link';
+        btnUpdateLink.style.background = '#8b5cf6';    // purple
+    }
+}
+
+if (btnUpdateLink) {
+    btnUpdateLink.addEventListener('click', async () => {
+        const activeWs = getActiveWorkspace();
+        const code = jar.toString();
+
+        // If on MAIN: copy main's code into the LINK workspace, but stay on main.
+        if (activeWs === 'main') {
+            setWorkspaceCode('link', code);
+        }
+        // (If on LINK, we just re-encode the link content that's already showing.)
+
+        try {
+            const encoded = encodeModel(code);
+            const url = window.location.origin + window.location.pathname + '#scad=' + encoded;
+            history.replaceState(null, '', url);   // update address bar, no navigation
+            try {
+                await navigator.clipboard.writeText(url);
+                logToConsole('🔗 Link updated and copied to clipboard.');
+            } catch (copyErr) {
+                logToConsole('🔗 Link updated in address bar (clipboard unavailable).');
+            }
+            refreshUpdateLinkState();
+        } catch (err) {
+            logToConsole('🔗 Could not generate link: ' + (err.message || err));
+        }
+    });
 }
 
 // ==========================================================================
