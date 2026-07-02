@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "291"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "283"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -177,29 +177,12 @@ async function deletePersistentSvg(filename) {
 // 🍯 INITIALIZE CODEMIRROR 6 (custom SCADLite bundle — window.scadCM)
 let cmView = null;
 const jar = (() => {
-
-	/*
-	cmView = window.scadCM.newEditor(editorElement, "", {
-        // onChange fires on every doc change, AFTER CM6 commits it — so
-        // rawEditorCode is always current (no rAF needed anymore).
-		onChange: (view) => {
-            rawEditorCode = view.state.doc.toString();
-            localStorage.setItem('openscad_editor_cache', rawEditorCode);
-            if (typeof refreshUpdateLinkColor === 'function') refreshUpdateLinkColor();
-        }
-    });
-	*/
-
     cmView = window.scadCM.newEditor(editorElement, "", {
         // onChange fires on every doc change, AFTER CM6 commits it — so
         // rawEditorCode is always current (no rAF needed anymore).
         onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
-            // 🛡️ Guard against premature cache wipes during initialization
-            if (workspaceInitialized) {
-                localStorage.setItem('openscad_editor_cache', rawEditorCode);
-            }
-            if (typeof refreshUpdateLinkColor === 'function') refreshUpdateLinkColor();
+            localStorage.setItem('openscad_editor_cache', rawEditorCode);
         }
     });
 
@@ -297,108 +280,6 @@ if (consoleBox && toggleConsoleBtn) {
     toggleConsoleBtn.addEventListener('click', () => {
         applyConsoleLayout(!isConsoleVisible);
         if (isConsoleVisible && typeof logToConsole === 'function') logToConsole("🖥️ Console restored.");
-    });
-}
-
-// ==========================================================================
-// 💾 BACKUP RESTORE / DISCARD (appears only when a clobber-backup exists)
-// ==========================================================================
-const btnRestoreBackup = document.getElementById('btn-restore-backup');
-const btnDiscardBackup = document.getElementById('btn-discard-backup');
-
-function updateBackupButtonsVisibility() {
-    const hasBackup = !!localStorage.getItem('openscad_editor_backup');
-    const disp = hasBackup ? 'inline-block' : 'none';
-    if (btnRestoreBackup) btnRestoreBackup.style.display = disp;
-    if (btnDiscardBackup) btnDiscardBackup.style.display = disp;
-}
-
-if (btnRestoreBackup) {
-    btnRestoreBackup.addEventListener('click', () => {
-        const backup = localStorage.getItem('openscad_editor_backup');
-        if (backup === null) { updateBackupButtonsVisibility(); return; }
-        // Swap: current editor content becomes the new backup; backup loads into editor.
-        const current = jar.toString();
-        localStorage.setItem('openscad_editor_backup', current);
-        localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
-        jar.updateCode(backup);
-        logToConsole('💾 Swapped in backup (your previous content is now the backup).');
-        updateBackupButtonsVisibility();
-        // Trigger a preview of the restored content.
-        const previewBtn = document.getElementById('btn-preview');
-        if (previewBtn) previewBtn.click();		
-    });
-}
-
-if (btnDiscardBackup) {
-    btnDiscardBackup.addEventListener('click', () => {
-        localStorage.removeItem('openscad_editor_backup');
-        localStorage.removeItem('openscad_editor_backup_time');
-        logToConsole('💾 Backup discarded.');
-        updateBackupButtonsVisibility();
-    });
-}
-
-// Show/hide on startup based on whether a backup exists.
-updateBackupButtonsVisibility();
-
-// ==========================================================================
-// 🔗 MODEL LINK TOGGLE + UPDATE LINK BUTTON
-// ==========================================================================
-const btnToggleModelLink = document.getElementById('btn-toggle-model-link');
-const btnUpdateLink = document.getElementById('btn-update-link');
-
-// Tracks what's currently encoded in the URL, so we can show stale (purple) vs fresh (gray).
-let lastLinkedCode = null;
-
-let modelLinkEnabled = localStorage.getItem('openscad_model_link') === 'enabled';
-
-function refreshUpdateLinkColor() {
-    if (!btnUpdateLink) return;
-    // Purple = stale (current editor differs from what's in the URL, so clicking will update).
-    // Gray  = fresh (URL matches current editor).
-    const isStale = (jar.toString() !== lastLinkedCode);
-    btnUpdateLink.style.background = isStale ? '#8b5cf6' : '#6c757d';
-}
-
-function applyModelLinkLayout(enabled) {
-    modelLinkEnabled = enabled;
-    localStorage.setItem('openscad_model_link', enabled ? 'enabled' : 'disabled');
-    if (btnToggleModelLink) {
-        btnToggleModelLink.textContent = enabled ? 'Enabled' : 'Disabled';
-        btnToggleModelLink.style.backgroundColor = enabled ? '#28a745' : '#dc3545';
-    }
-    if (btnUpdateLink) {
-        btnUpdateLink.style.display = enabled ? 'inline-block' : 'none';
-        if (enabled) refreshUpdateLinkColor();
-    }
-}
-
-if (btnToggleModelLink) {
-    applyModelLinkLayout(modelLinkEnabled);
-    btnToggleModelLink.addEventListener('click', () => applyModelLinkLayout(!modelLinkEnabled));
-}
-
-if (btnUpdateLink) {
-    btnUpdateLink.addEventListener('click', async () => {
-        try {
-            const code = jar.toString();
-            const encoded = encodeModel(code);
-            const url = window.location.origin + window.location.pathname + '#scad=' + encoded;
-            // Update the address bar without navigating/reloading.
-            history.replaceState(null, '', url);
-            lastLinkedCode = code;
-            refreshUpdateLinkColor();
-            // Auto-copy to clipboard (best-effort; needs HTTPS).
-            try {
-                await navigator.clipboard.writeText(url);
-                logToConsole('🔗 Share link updated and copied to clipboard.');
-            } catch (copyErr) {
-                logToConsole('🔗 Share link updated in address bar (clipboard copy unavailable).');
-            }
-        } catch (err) {
-            logToConsole('🔗 Could not generate share link: ' + (err.message || err));
-        }
     });
 }
 
@@ -581,21 +462,6 @@ function logToConsole(message) {
     if (cleanMessage.includes("Could not initialize localization") || cleanMessage.includes("Fontconfig error")) return; 
     consoleBox.textContent += `\n${cleanMessage}`;
     consoleBox.scrollTop = consoleBox.scrollHeight; 
-}
-
-// ==========================================================================
-// 🔗 MODEL LINK — encode/decode SCAD to/from URL hash (fflate gzip + base64url)
-// ==========================================================================
-function encodeModel(text) {
-    const compressed = fflate.gzipSync(fflate.strToU8(text));
-    let b64 = btoa(String.fromCharCode(...compressed));
-    return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function decodeModel(str) {
-    let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
-    while (b64.length % 4) b64 += '=';
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    return fflate.strFromU8(fflate.gunzipSync(bytes));
 }
 
 // ---- FILE OPERATIONS ----
@@ -796,58 +662,13 @@ if (btnSettingsCheatSheet && settingsOverlay && helpOverlay) {
 async function initOpenSCAD() {
     logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
     logToConsole('System ready. Instantiating WASM...');
+    
+    const savedCode = localStorage.getItem('openscad_editor_cache');
+    if (savedCode && savedCode.trim() !== "") {
+        jar.updateCode(savedCode); 
+    } else {
+        //jar.updateCode(`linear_extrude(height = 4) {\n\ttext(\n\t\ttext = "Hello, world!", \n\t\tsize = 14, \n\t\tfont = "Liberation Sans:style=Bold", \n\t\thalign = "center", \n\t\tvalign = "center"\n\t);\n}`); 
 
-	// 🔗 Model Link: if the URL hash carries a shared model, it wins over cache/default —
-	// but if the user has meaningful cached work that differs, confirm before clobbering.
-	let loadedFromUrl = false;
-	if (window.location.hash.startsWith('#scad=')) {
-		logToConsole('🔗 URL hash detected; cache check running...');
-	    try {
-	        const encoded = window.location.hash.slice('#scad='.length);
-	        const decoded = decodeModel(encoded);
-	        if (decoded && decoded.trim() !== "") {
-	            const cached = localStorage.getItem('openscad_editor_cache');
-	            // Only prompt if there's real cached work that differs from the shared model.
-	            const hasMeaningfulCache = cached && cached.trim() !== "" && cached !== decoded;
-	
-	            let proceed = true;
-				/*
-	            if (hasMeaningfulCache) {
-					logToConsole('🔗 hasMeaningfulCache = ' + hasMeaningfulCache);
-	                proceed = confirm(
-	                    "This link contains a shared model.\n\n" +
-	                    "Load it and replace your current work? " +
-	                    "(Your current work will be kept as a backup.)"
-	                );
-	            }
-				*/
-	
-	            if (proceed) {
-	                // Stash current work before clobbering, so it's recoverable.
-	                if (hasMeaningfulCache) {
-	                    localStorage.setItem('openscad_editor_backup', cached);
-	                    localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
-	                    logToConsole('🔗 Previous work backed-up before loading shared model.');
-						//updateBackupButtonsVisibility();
-						if (typeof updateBackupButtonsVisibility === 'function') updateBackupButtonsVisibility();
-	                }
-	                jar.updateCode(decoded);
-	                loadedFromUrl = true;
-	                logToConsole('🔗 Loaded shared model from link.');
-	            } else {
-	                logToConsole('🔗 Kept your current work; shared model not loaded.');
-	            }
-	        }
-	    } catch (err) {
-	        logToConsole('🔗 Could not decode shared model link; ignoring.');
-	    }
-	}
-	
-	if (!loadedFromUrl) {
-	    const savedCode = localStorage.getItem('openscad_editor_cache');
-	    if (savedCode && savedCode.trim() !== "") {
-	        jar.updateCode(savedCode); 
-	    } else {
 jar.updateCode(`$fn = 25;   // number of segments set to 25
 
 linear_extrude(height = 4) {   // 3D text
@@ -909,8 +730,6 @@ hull() {                                 // hull example (D6 die)
 }`);
         
     }
-	}
-	
     if (typeof triggerLineUpdate === 'function') triggerLineUpdate();
     
 	try {
