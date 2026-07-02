@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scadlite-v243';
+const CACHE_NAME = 'scadlite-v283';
 
 const ASSETS_TO_CACHE = [
   // Base HTML and Manifest
@@ -29,11 +29,7 @@ const ASSETS_TO_CACHE = [
   './libs/STLExporter.js',
   './libs/openscad.js',
   './libs/openscad.wasm',
-
-  // 📴 NEW STANDALONE HIGHLIGHTING PIPELINE ASSETS:
-  './libs/prism-tomorrow.min.css',
-  './libs/prism.min.js',
-  './libs/codejar.min.js',
+  './libs/scadlite-cm6.bundle.js',
   
   // Your local typography suite
   './fonts/LiberationSans-Regular.ttf',
