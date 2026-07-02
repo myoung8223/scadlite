@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "284"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "285"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -180,9 +180,10 @@ const jar = (() => {
     cmView = window.scadCM.newEditor(editorElement, "", {
         // onChange fires on every doc change, AFTER CM6 commits it — so
         // rawEditorCode is always current (no rAF needed anymore).
-        onChange: (view) => {
+		onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
             localStorage.setItem('openscad_editor_cache', rawEditorCode);
+            if (typeof refreshUpdateLinkColor === 'function') refreshUpdateLinkColor();
         }
     });
 
@@ -280,6 +281,66 @@ if (consoleBox && toggleConsoleBtn) {
     toggleConsoleBtn.addEventListener('click', () => {
         applyConsoleLayout(!isConsoleVisible);
         if (isConsoleVisible && typeof logToConsole === 'function') logToConsole("🖥️ Console restored.");
+    });
+}
+
+// ==========================================================================
+// 🔗 MODEL LINK TOGGLE + UPDATE LINK BUTTON
+// ==========================================================================
+const btnToggleModelLink = document.getElementById('btn-toggle-model-link');
+const btnUpdateLink = document.getElementById('btn-update-link');
+
+// Tracks what's currently encoded in the URL, so we can show stale (purple) vs fresh (gray).
+let lastLinkedCode = null;
+
+let modelLinkEnabled = localStorage.getItem('openscad_model_link') === 'enabled';
+
+function refreshUpdateLinkColor() {
+    if (!btnUpdateLink) return;
+    // Purple = stale (current editor differs from what's in the URL, so clicking will update).
+    // Gray  = fresh (URL matches current editor).
+    const isStale = (jar.toString() !== lastLinkedCode);
+    btnUpdateLink.style.background = isStale ? '#8b5cf6' : '#6c757d';
+}
+
+function applyModelLinkLayout(enabled) {
+    modelLinkEnabled = enabled;
+    localStorage.setItem('openscad_model_link', enabled ? 'enabled' : 'disabled');
+    if (btnToggleModelLink) {
+        btnToggleModelLink.textContent = enabled ? 'Enabled' : 'Disabled';
+        btnToggleModelLink.style.backgroundColor = enabled ? '#28a745' : '#dc3545';
+    }
+    if (btnUpdateLink) {
+        btnUpdateLink.style.display = enabled ? 'inline-block' : 'none';
+        if (enabled) refreshUpdateLinkColor();
+    }
+}
+
+if (btnToggleModelLink) {
+    applyModelLinkLayout(modelLinkEnabled);
+    btnToggleModelLink.addEventListener('click', () => applyModelLinkLayout(!modelLinkEnabled));
+}
+
+if (btnUpdateLink) {
+    btnUpdateLink.addEventListener('click', async () => {
+        try {
+            const code = jar.toString();
+            const encoded = encodeModel(code);
+            const url = window.location.origin + window.location.pathname + '#scad=' + encoded;
+            // Update the address bar without navigating/reloading.
+            history.replaceState(null, '', url);
+            lastLinkedCode = code;
+            refreshUpdateLinkColor();
+            // Auto-copy to clipboard (best-effort; needs HTTPS).
+            try {
+                await navigator.clipboard.writeText(url);
+                logToConsole('🔗 Share link updated and copied to clipboard.');
+            } catch (copyErr) {
+                logToConsole('🔗 Share link updated in address bar (clipboard copy unavailable).');
+            }
+        } catch (err) {
+            logToConsole('🔗 Could not generate share link: ' + (err.message || err));
+        }
     });
 }
 
