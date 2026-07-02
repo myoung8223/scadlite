@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "286"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "287"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -748,6 +748,7 @@ async function initOpenSCAD() {
 	// but if the user has meaningful cached work that differs, confirm before clobbering.
 	let loadedFromUrl = false;
 	if (window.location.hash.startsWith('#scad=')) {
+		logToConsole('🔗 URL hash detected; cache check running...');
 	    try {
 	        const encoded = window.location.hash.slice('#scad='.length);
 	        const decoded = decodeModel(encoded);
@@ -758,6 +759,7 @@ async function initOpenSCAD() {
 	
 	            let proceed = true;
 	            if (hasMeaningfulCache) {
+					logToConsole('🔗 hasMeaningfulCache = ' + hasMeaningfulCache);
 	                proceed = confirm(
 	                    "This link contains a shared model.\n\n" +
 	                    "Load it and replace your current work? " +
