@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "291"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "292"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -288,7 +288,7 @@ function updateWorkspaceButtons() {
     const showWsBtns = active && hasData;
     if (btnSwitchWorkspace) {
         btnSwitchWorkspace.style.display = showWsBtns ? 'inline-block' : 'none';
-        btnSwitchWorkspace.innerHTML = onLink ? 'Switch to<br>Main' : 'Switch to<br>Link Sharing';
+        btnSwitchWorkspace.innerHTML = onLink ? 'Switch to Main<br>Workspace' : 'Switch to Link<br>Workspace';
     }
     if (btnDisableLinkSharing) {
         btnDisableLinkSharing.style.display = showWsBtns ? 'inline-block' : 'none';
