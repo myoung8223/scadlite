@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "285"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "286"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -739,16 +739,45 @@ async function initOpenSCAD() {
     logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
     logToConsole('System ready. Instantiating WASM...');
 
-	// 🔗 Model Link: if the URL hash carries a shared model, it wins over cache/default.
+
+
+
+
+
+	// 🔗 Model Link: if the URL hash carries a shared model, it wins over cache/default —
+	// but if the user has meaningful cached work that differs, confirm before clobbering.
 	let loadedFromUrl = false;
 	if (window.location.hash.startsWith('#scad=')) {
 	    try {
 	        const encoded = window.location.hash.slice('#scad='.length);
 	        const decoded = decodeModel(encoded);
 	        if (decoded && decoded.trim() !== "") {
-	            jar.updateCode(decoded);
-	            loadedFromUrl = true;
-	            logToConsole('🔗 Loaded shared model from link.');
+	            const cached = localStorage.getItem('openscad_editor_cache');
+	            // Only prompt if there's real cached work that differs from the shared model.
+	            const hasMeaningfulCache = cached && cached.trim() !== "" && cached !== decoded;
+	
+	            let proceed = true;
+	            if (hasMeaningfulCache) {
+	                proceed = confirm(
+	                    "This link contains a shared model.\n\n" +
+	                    "Load it and replace your current work? " +
+	                    "(Your current work will be kept as a backup.)"
+	                );
+	            }
+	
+	            if (proceed) {
+	                // Stash current work before clobbering, so it's recoverable.
+	                if (hasMeaningfulCache) {
+	                    localStorage.setItem('openscad_editor_backup', cached);
+	                    localStorage.setItem('openscad_editor_backup_time', new Date().toISOString());
+	                    logToConsole('🔗 Previous work backed up before loading shared model.');
+	                }
+	                jar.updateCode(decoded);
+	                loadedFromUrl = true;
+	                logToConsole('🔗 Loaded shared model from link.');
+	            } else {
+	                logToConsole('🔗 Kept your current work; shared model not loaded.');
+	            }
 	        }
 	    } catch (err) {
 	        logToConsole('🔗 Could not decode shared model link; ignoring.');
