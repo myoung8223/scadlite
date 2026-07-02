@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "285"; // <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "286"; // <-- Incremented for SVG Import Database & Grid Layout
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -1778,6 +1778,7 @@ function ensureJSZipShim() {
 
 btnPreview.disabled = true; btnRender.disabled = true; btnExport.disabled = true;
 initOpenSCAD(); init3DWorkspace();
+window.switchWorkspace = switchWorkspace;   // temporary testing aid
 btnWireframe.style.background = '#007acc'; 
 
 // ==========================================================================
