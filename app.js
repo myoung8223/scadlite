@@ -852,7 +852,7 @@ if (btnSettingsCheatSheet && settingsOverlay && helpOverlay) {
 }
 
 async function initOpenSCAD() {
-    logToConsole(`Build ${BUILD_NUMBER} - OpenSCAD PWA Environment`);
+    logToConsole(`Build ${BUILD_NUMBER}`);
     logToConsole('System ready. Instantiating WASM...');
 
 	// 🔗 Shared link: if the URL carries a model, load it into the LINK workspace
