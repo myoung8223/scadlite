@@ -285,7 +285,7 @@ function updateWorkspaceButtons() {
         if (active) refreshUpdateLinkState();
     }
     // Switch + Disable: visible when active AND link workspace has data.
-    const showWsBtns = active && hasData;
+    const showWsBtns = active;
     if (btnSwitchWorkspace) {
         btnSwitchWorkspace.style.display = showWsBtns ? 'inline-block' : 'none';
         btnSwitchWorkspace.innerHTML = onLink ? 'Switch to Main<br>Workspace' : 'Switch to Link<br>Workspace';
