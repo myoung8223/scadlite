@@ -8,7 +8,9 @@ SCADLite is a lightweight, browser-optimized Progressive Web App (PWA) that pair
 
 The core purpose of this project is to make OpenSCAD design fully accessible on web-based platforms, especially ChromeOS. OpenSCAD has tremendous potential in K-12 education, a domain currently dominated by Chromebooks in the United States. This app gives students and educators a zero-setup, privacy-first, free and open source, OpenSCAD design environment.
 
-👉 **[Link to GitHub Pages-hosted PWA](https://myoung8223.github.io/scadlite)**
+SCADLite can be accessed/installed by visiting **[SCADLite.com](https://scadlite.com)**
+
+It can also be accessed via GitHub Pages at **[https://myoung8223.github.io/scadlite](https://myoung8223.github.io/scadlite)**
 
 ## Current Features
 
