@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "297";
+const BUILD_NUMBER = "298";
 
 import OpenSCAD from './libs/openscad.js';
 
