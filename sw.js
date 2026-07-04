@@ -8,7 +8,7 @@ const ASSETS_TO_CACHE = [
   './manifest.json',
   './favicon.ico',
   
-  // PWA Icons (make sure these exist in your root folder!)
+  // PWA icons (make sure these exist in your root folder!)
   './icon-192.png',
   './icon-512.png',
 
