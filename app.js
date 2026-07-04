@@ -3,7 +3,7 @@ const BUILD_NUMBER = "297";
 
 import OpenSCAD from './libs/openscad.js';
 
-// Dom Elements
+// DOM Elements
 const editorElement = document.getElementById('editor'); 
 const consoleBox = document.getElementById('console');
 const btnSave = document.getElementById('btn-save');
