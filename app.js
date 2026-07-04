@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "295"; //  <-- Incremented for SVG Import Database & Grid Layout
+const BUILD_NUMBER = "296";
 
 import OpenSCAD from './libs/openscad.js';
 
