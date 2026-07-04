@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scadlite-v283';
+const CACHE_NAME = 'scadlite-v296';
 
 const ASSETS_TO_CACHE = [
   // Base HTML and Manifest
@@ -11,15 +11,6 @@ const ASSETS_TO_CACHE = [
   // PWA Icons (make sure these exist in your root folder!)
   './icon-192.png',
   './icon-512.png',
-
-  // Three.js and its plugins (Exactly as they appear in your HTML)
-  //'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
-  //'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/STLLoader.js',
-  //'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/controls/OrbitControls.js',
-
-  // The actual WASM compiler your app.js uses
-  //'https://code4fukui.github.io/scad2stl/openscad.js',
-  //'https://code4fukui.github.io/scad2stl/openscad.wasm',
 
   // local libraries
   './libs/three.min.js',
