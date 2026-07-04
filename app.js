@@ -1,5 +1,5 @@
-// --- BUILD VERSION CONTROLLER ---
-const BUILD_NUMBER = "299";
+// ---- BUILD VERSION CONTROLLER ----
+const BUILD_NUMBER = "300";
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -2000,7 +2000,7 @@ using Google Gemini Large Language Models (including Gemini Flash, Gemini
 Pro, and Gemini Experimental/Thinking models).
 
 Additional work was performed with the assistance of Anthropic Claude
-(Sonnet 4.6 High).
+(Sonnet and Opus).
 
 The author's role focused on structural engineering ideas, UI/UX steering, 
 extensive behavioral testing, and orchestrating the integration of the 
