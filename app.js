@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "296";
+const BUILD_NUMBER = "297";
 
 import OpenSCAD from './libs/openscad.js';
 
@@ -745,6 +745,16 @@ window.addEventListener('keydown', (event) => {
         }
     }
 
+    // 🛡️ Block [Ctrl+R] / [Cmd+R] reload — redirect to Preview instead
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!btnPreview.disabled) {
+            logToConsole('⌨️ Hotkey Intercepted: [Ctrl+R] (redirected to Preview)');
+            btnPreview.click();
+        }
+    }
+	
     // 🚀 Export to STL [F7]
     if (event.key === 'F7') {
         event.preventDefault(); 
