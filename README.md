@@ -1,4 +1,4 @@
-# SCADLite
+# [SCADLite](https://scadlite.com)
 
 <a href="https://raw.githubusercontent.com/myoung8223/scadlite/refs/heads/main/title.png" target="_blank">
 <img alt="image" src="https://github.com/myoung8223/scadlite/blob/main/title_20260628.png" />
