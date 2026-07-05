@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scadlite-v301';
+const CACHE_NAME = 'scadlite-v303';
 
 const ASSETS_TO_CACHE = [
   // Base HTML and Manifest
@@ -20,6 +20,7 @@ const ASSETS_TO_CACHE = [
   './libs/STLExporter.js',
   './libs/openscad.js',
   './libs/openscad.wasm',
+  './preview-transforms.js',
   './libs/scadlite-cm6.bundle.js',
   
   // Your local typography suite
