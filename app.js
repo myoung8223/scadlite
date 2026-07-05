@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "302";
+const BUILD_NUMBER = "301";
 
 import OpenSCAD from './libs/openscad.js';
 import { maskCollisions } from "./modifier-collision-guard.js";
