@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "303";
+const BUILD_NUMBER = "305";
 
 import OpenSCAD from './libs/openscad.js';
 import { isolateHighlights, isolateOpenSCADGhosts, splitTopLevelStatements,
@@ -1137,7 +1137,9 @@ btnPreview.addEventListener('click', async () => {
         logToConsole("🩺 Running pre-pass code check...");
         const checkInstance = await createWasmInstance();
         mapExternalResources(checkInstance);
-        checkInstance.FS.writeFile('/check.scad', scriptCode);
+
+		const previewInjection = "$preview = true;\n";
+		checkInstance.FS.writeFile('/check.scad', previewInjection + scriptCode);
 
         try {
             checkInstance.callMain(['/check.scad', '-o', '/check.csg']);
@@ -1177,12 +1179,12 @@ btnPreview.addEventListener('click', async () => {
         	logToConsole("🪲 -----------------------------------------\n");
 		}
 
-        solidInstance.FS.writeFile('/solid_input.scad', solidCode);
+		solidInstance.FS.writeFile('/solid_input.scad', previewInjection + solidCode);
         
         let solidData = null;
         try {
             solidInstance.callMain(['/solid_input.scad', '--backend=manifold', '-o', '/solid.3mf']);
-            if (solidInstance.FS.analyzePath('/solid.3mf').exists) {
+			if (solidInstance.FS.analyzePath('/solid.3mf').exists) {
                 solidData = solidInstance.FS.readFile('/solid.3mf');
                 currentStlBlob = new Blob([solidData], { type: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml' });
                 btnExport.disabled = false;
@@ -1214,11 +1216,11 @@ btnPreview.addEventListener('click', async () => {
             	logToConsole("🪲 -----------------------------------------\n");
 			}
             
-            ghostInstance.FS.writeFile('/ghost_input.scad', ghostCode);
+			ghostInstance.FS.writeFile('/ghost_input.scad', previewInjection + ghostCode);
             
             try {
                 ghostInstance.callMain(['/ghost_input.scad', '--backend=manifold', '-o', '/ghost.3mf']);
-                if (ghostInstance.FS.analyzePath('/ghost.3mf').exists) {
+				if (ghostInstance.FS.analyzePath('/ghost.3mf').exists) {
                     ghostData = ghostInstance.FS.readFile('/ghost.3mf');
                 }
             } catch (err) {
@@ -1248,7 +1250,7 @@ btnPreview.addEventListener('click', async () => {
                 logToConsole("🪲 -----------------------------------------\n");
             }
 
-            highlightInstance.FS.writeFile('/highlight_input.scad', highlightCode);
+            highlightInstance.FS.writeFile('/highlight_input.scad', previewInjection + highlightCode);
 
             try {
                 highlightInstance.callMain(['/highlight_input.scad', '--backend=manifold', '-o', '/highlight.3mf']);

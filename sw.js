@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scadlite-v303';
+const CACHE_NAME = 'scadlite-v305';
 
 const ASSETS_TO_CACHE = [
   // Base HTML and Manifest
