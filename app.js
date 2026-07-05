@@ -1,7 +1,8 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "301";
+const BUILD_NUMBER = "302";
 
 import OpenSCAD from './libs/openscad.js';
+import { maskCollisions } from "./modifier-collision-guard.js";
 
 // DOM Elements
 const editorElement = document.getElementById('editor'); 
@@ -1025,6 +1026,11 @@ btnPreview.addEventListener('click', async () => {
 	const scriptCode = jar.toString();
     const errorLogs = [];
 
+	const { masked, restore } = maskCollisions(rawSource);
+	const solidCode     = restore(buildSolidPass(masked));
+	const ghostCode     = restore(buildGhostPass(masked));
+	const highlightCode = restore(buildHighlightPass(masked));
+	
     // Isolate % modifiers (ignoring math modulo operations)
     const ghostRegex = /%(?=\s*(cube|sphere|cylinder|polyhedron|square|circle|polygon|translate|rotate|scale|resize|mirror|multmatrix|color|offset|hull|minkowski|union|difference|intersection|for|intersection_for|if|linear_extrude|rotate_extrude|surface|projection|render|text|import)\b)/g;
     const hasGhost = ghostRegex.test(scriptCode);
