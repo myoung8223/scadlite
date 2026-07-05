@@ -172,7 +172,7 @@ function toggleHelpSection(id, link) {
                 <button id="btn-preview" style="margin-left: auto; background: #ffc107; color: #000;">Preview</button>
                 <button id="btn-render" style="background: #28a745;" disabled>Render</button>
                 <button id="btn-export" style="background: #007acc;" disabled>Export</button>
-                <button id="btn-update-link" style="display: none; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px; background: #8b5cf6;"">Update<br>Link</button>
+                <button id="btn-update-link" style="display: none; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px; background: #8b5cf6;">Update<br>Link</button>
             </div>
             
             <div class="editor-wrapper">
@@ -211,22 +211,39 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <li><code>[Ctrl]</code> + <code>[O]</code> : Open .scad File</li>
                     </ul>
 
-					<h3>Link Sharing, Workspaces, and Multiple Instances <a href="#" onclick="toggleHelpSection('link-sharing-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
-					<div id="link-sharing-body" style="display: none;">
-    					<p style="color: #ccc;">
-    					Link sharing can be enabled in Workspace Settings. Enabling it gives you a second workspace, the Link Workspace, in addition to the Main Workspace. Workspaces can be toggled between freely. Code written in either workspace persists in local storage, written on a per keystoke basis.  However, opening a URL containing an encoded model will overwrite the Link Workspace. When Link Sharing is enabled in settings, use the Share Link button to encode your current model into a URL and copy it to your clipboard for sharing. Note that complex models may run into problems, since URL parameters are limited in length. Link sharing is best suited for smaller models or demo purposes, not as a primary save method. Also, sharing a link while the Main Workspace is selected will overwrite the Link Workspace with the Main Workspace's code.
-    					</p>
-    					<p style="color: #ccc;">
-    					Multiple instances of the page/PWA can be open at once, but the Main and Link workspaces are shared, global storage, not separate per instance. Each new instance loads whichever version of the workspaces most recently saved. If you work with multiple instances open simultaneously, only the last modified code editor caches will be written to storage. Thus, an earlier instance's unsaved changes can be silently lost, even if that instance is still open.  The moment a page refreshes, reloads, or a new instance is opened, it will pull the shared storage's current contents from the last instance that had code edited. If you need to work on more than one model at a time, save each to a .scad file as needed rather than relying on the workspace storage caches to hold multiple versions. Code is retained independently in each instance's code editor while that instance stays open, so multiple instances can be used simultaneously.  Though when using multiple instances, avoid refreshing the instance you're relying on until you've saved your work as a .scad file.  Note that [F5] keypresses are intercepted to perform a Preview operation, as opposed to refreshing.  Though refreshing is still possible via right-click context menu or with [Ctrl] + [R] when using Firefox, so care is needed to not refresh the page unintentionally.
-    					</p>
-					</div>
-					                    
-					<h3 style="display: inline-block; margin-bottom: 8px;">Compatibility Notes <a href="#" onclick="toggleHelpSection('compat-note-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
-					<div id="compat-note-body" style="display: none;">
-					    <div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
-					        <span style="font-size: 0.9rem; color: #ddd;">Imported STL files must be in ASCII format.  Binary-formatted STL files are not supported.  OpenSCAD can be configured to export STLs in ASCII format in Preferences &rsaquo; Advanced &rsaquo; Export Features.  Note that ASCII STLs are much larger in size.</span>
-					    </div>
-					</div>                    
+                    <h3 style="margin-bottom: 8px;">Link Sharing, Workspaces, and Multiple Instances <a href="#" onclick="toggleHelpSection('link-sharing-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
+                    <div id="link-sharing-body" style="display: none;">
+                        <p style="color: #ccc;">
+                        Link sharing can be enabled in Workspace Settings. Enabling it gives you a second workspace, the Link Workspace, in addition to the Main Workspace. Workspaces can be toggled between freely. Code written in either workspace persists in local storage, written on a per keystroke basis.  However, opening a URL containing an encoded model will overwrite the Link Workspace. When Link Sharing is enabled in settings, use the Share Link button to encode your current model into a URL and copy it to your clipboard for sharing. Note that complex models may run into problems, since URL parameters are limited in length. Link sharing is best suited for smaller models or demo purposes, not as a primary save method. Also, sharing a link while the Main Workspace is selected will overwrite the Link Workspace with the Main Workspace's code.
+                        </p>
+                        <p style="color: #ccc;">
+                        Multiple instances of the page/PWA can be open at once, but the Main and Link workspaces are shared, global storage, not separate per instance. Each new instance loads whichever version of the workspaces most recently saved. If you work with multiple instances open simultaneously, only the last modified code editor caches will be written to storage. Thus, an earlier instance's unsaved changes can be silently lost, even if that instance is still open.  The moment a page refreshes, reloads, or a new instance is opened, it will pull the shared storage's current contents from the last instance that had code edited. If you need to work on more than one model at a time, save each to a .scad file as needed rather than relying on the workspace storage caches to hold multiple versions. Code is retained independently in each instance's code editor while that instance stays open, so multiple instances can be used simultaneously.  Though when using multiple instances, avoid refreshing the instance you're relying on until you've saved your work as a .scad file.  Note that [F5] keypresses are intercepted to perform a Preview operation, as opposed to refreshing.  Though refreshing is still possible via right-click context menu or with [Ctrl] + [R] when using Firefox, so care is needed to not refresh the page unintentionally.
+                        </p>
+                    </div>
+
+                    <h3 style="margin-bottom: 8px;">Compatibility Notes <a href="#" onclick="toggleHelpSection('compat-note-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
+                    <div id="compat-note-body" style="display: none;">
+
+                        <!-- Note 1: STL import format -->
+                        <div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+                            <span style="font-size: 0.9rem; color: #ddd;">Imported STL files must be in ASCII format.  Binary-formatted STL files are not supported.  OpenSCAD can be configured to export STLs in ASCII format in Preferences &rsaquo; Advanced &rsaquo; Export Features.  Note that ASCII STLs are much larger in size.</span>
+                        </div>
+
+                        <!-- Note 2: external libraries / inlining -->
+                        <div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
+                            <div style="font-size: 0.9rem; color: #ddd;">
+                                External libraries are not yet supported. Simpler libraries might be able to be inlined at the bottom of projects. The code editor is configured with special comment-keyword folding. A section wrapped in <code>// REGION</code> / <code>// ENDREGION</code> markers will present as foldable code.
+                            </div>
+                            <pre style="background-color: rgba(0, 0, 0, 0.3); border-radius: 4px; padding: 12px; margin: 12px 0; overflow-x: auto; font-family: monospace; font-size: 0.85rem; color: #ddd; white-space: pre;">// REGION [Your description of the library code to fold here]
+[inlined library code]
+// ENDREGION</pre>
+                            <div style="font-size: 0.9rem; color: #ddd;">
+                                Libraries that are more "flat", with fewer interdependencies, are better candidates for inlining, such as MCAD. BOSL/BOSL2, on the other hand, would need to be flattened, which would be challenging.
+                            </div>
+                        </div>
+
+                    </div>
+
                     <hr style="border-color: #444; margin: 25px 0;">
                     
                     <h2>OpenSCAD Cheat Sheet</h2>
@@ -234,13 +251,13 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     
                     <hr style="border-color: #444;">
                     
-                    <h3>Syntax & Includes</h3>
+					<h3>Syntax & Includes</h3>
                     <code>var = value;</code><br>
                     <code>module name(...) { ... }</code><br>
                     <code>name();</code><br>
                     <code>function name(...) = ...;</code><br>
-                    <code>include &lt;filename.scad&gt;</code><br>
-                    <code>use &lt;filename.scad&gt;</code><br>
+                    <code style="text-decoration: line-through; opacity: 0.5;">include &lt;filename.scad&gt;</code> <span style="font-size: 0.8rem; color: #ffaa00;">not yet supported</span><br>
+                    <code style="text-decoration: line-through; opacity: 0.5;">use &lt;filename.scad&gt;</code> <span style="font-size: 0.8rem; color: #ffaa00;">not yet supported</span><br>
                     <br>
 
                     <h3>2D Shapes</h3>
