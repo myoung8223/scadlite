@@ -30,6 +30,7 @@ It can also be accessed/installed via GitHub Pages at **<a href="https://myoung8
 
 ## Improvements and Features to Add
 
+- [ ] **Library Support:** Add support for `include`/`use` of external libraries, or a means of bundling/flattening them for inlining.
 - [x] **STL Importing:** Allow users to import STL files into the PWA and then import them into projects.
 - [x] **SVG Importing:** Allow users to import SVG files into the PWA and then import them into projects.
 - [x] **3MF Exporting:** Allow users to toggle between exporting to 3MF or STL.
@@ -52,7 +53,7 @@ It can also be accessed/installed via GitHub Pages at **<a href="https://myoung8
 - [x] **Toggle for Console:** Add a toggle to hide/show the console.
 - [x] **Help Button:** Add a Help button for communicating basic use and app information.
 - [x] **Link to OpenSCAD Cheat Sheet:** The ability to pop-up the super handy OpenSCAD cheat sheet would be a nice feature to add.
-- [ ] **Improve PWA Icon:** The icon is a little dark. It could use a snazzier icon.
+- [x] **Improve PWA Icon:** The icon is a little dark. It could use a snazzier icon.
 - [x] **F5 to Preview:** Press F5 key to quickly initiate a preview, just like in OpenSCAD.  Message overlay indicating preview build in progress.
 - [x] **Native Color & Material Support via 3MF:** Replace the legacy single-color `scad2stl` pipeline entirely, and shift output targets to the **3MF (3D Manufacturing Format)** specification to natively export color, multi-material, and geometry metadata directly from the WebAssembly core.
 - [x] **Client-Side Archive Extraction (`fflate` + `ThreeMFLoader`):** Implement an in-memory zip-decompression layer that bridges `fflate` with the Three.js 3MF loader, allowing zipped 3MF models to be unpacked and loaded seamlessly on the fly with zero backend overhead.
