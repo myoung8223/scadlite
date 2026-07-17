@@ -24,6 +24,52 @@
         .gutter-error-flare { background-color: #dc3545 !important; color: #ffffff !important; padding: 2px 6px !important; border-radius: 3px; font-weight: bold; }
         
         * { box-sizing: border-box; }
+        /* Reuses the Liberation Mono already bundled for the WASM engine's
+           text() — same file, so it works offline via the SW cache. */
+        @font-face {
+            font-family: 'Liberation Mono';
+            src: url('./fonts/LiberationMono-Regular.ttf') format('truetype');
+            font-display: swap;
+        }
+        /* Numeric settings fields: no spin buttons (values are typed). */
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+        /* Project name overlay in the 3D viewer's top-left corner. */
+        /* 🎛️ Viewer toolbar: small square symbol buttons, bottom-left of
+           the 3D pane. z-index 10 keeps it under the in-panel help overlay
+           (20) so it dims/blurs with the viewer, like the project name. */
+        #viewer-toolbar {
+            position: absolute; bottom: 12px; left: 12px; z-index: 10;
+            display: flex; gap: 6px; align-items: center;
+        }
+        #viewer-toolbar-extra { display: flex; gap: 6px; }
+        .vbtn {
+            width: 28px; height: 28px; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 15px; line-height: 1;
+            background: #2a2a2a; color: #cfcfcf;
+            border: 1px solid #3a3a3a; border-radius: 4px;
+            cursor: pointer; opacity: 0.55; user-select: none;
+        }
+        .vbtn:hover { opacity: 0.9; }
+        .vbtn.vb-on {
+            background: #3d5a80; border-color: #5b82b5; color: #ffffff;
+            opacity: 1;
+        }
+		.vbtn img { width: 20px; height: 20px; display: block; pointer-events: none; }
+        #viewer-project-name {
+            /* z-index 10: above the 3D canvas (1) but BELOW the in-panel help
+               overlay (20), so it blurs/dims with the viewer instead of
+               floating above the frosted glass. Full-screen overlays (1000)
+               were already above it. */
+            position: absolute; top: 10px; left: 10px; z-index: 10;
+            color: rgba(200, 200, 200, 0.55);
+            font-family: monospace;
+            font-size: 1.1rem; letter-spacing: 0.05em;
+            pointer-events: none; user-select: none;
+            -webkit-user-select: none;
+        }
         body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #222; color: #fff; overflow: hidden; }
         
         .app-container { display: flex; height: 100vh; width: 100vw; }
@@ -38,6 +84,10 @@
         button { background: #007acc; color: white; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 0.9rem; }
         button:hover { background: #0062a3; }
         button:disabled { background: #444; color: #888; cursor: not-allowed; }
+        /* Workspace toolbar buttons: smaller font, fixed height so single-line
+           and two-line (link sharing) buttons all match exactly. Overlay
+           buttons are unaffected. */
+        .toolbar button { font-size: 0.8rem; height: 33px; padding: 0 10px; }
         .file-btn { background: #444; }
         .file-btn:hover { background: #555; }
         
@@ -78,6 +128,10 @@
         .close-btn { position: absolute; top: 12px; right: 16px; background: none; border: none; color: #888; font-size: 22px; cursor: pointer; padding: 0; line-height: 1; }
         .close-btn:hover { color: #fff; }
         .settings-group { margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+        /* Buttons keep their set width even when a long label wraps to two
+           lines — flex items otherwise shrink below their width under
+           pressure from a wide sibling. */
+        .settings-group button { flex-shrink: 0; }
 
         /* 📊 Two Column Settings Layout with Vertical Divider */
         .settings-columns-wrapper { 
@@ -159,9 +213,12 @@ function toggleHelpSection(id, link) {
     <div class="app-container">
         <div class="left-panel" id="left-pane-container">
             <div class="toolbar">
+                <button class="file-btn" id="btn-new-window" style="font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">New<br>Window</button>
                 <input type="file" id="file-load" style="display:none;" accept=".scad">
                 <button class="file-btn" onclick="document.getElementById('file-load').click()">Load</button>
-                <button class="file-btn" id="btn-save">Save</button>
+                <button class="file-btn" id="btn-open" style="font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">App<br>Files</button>
+                <button class="file-btn" id="btn-save-appfs">Save</button>
+                <button class="file-btn" id="btn-save">Download</button>
                 
                 <button id="btn-settings" class="file-btn">⚙️ Settings</button>
                 <button id="btn-switch-workspace" class="file-btn" style="display: none; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">Switch to Link<br>Workspace</button>
@@ -171,7 +228,7 @@ function toggleHelpSection(id, link) {
                 
                 <button id="btn-preview" style="margin-left: auto; background: #ffc107; color: #000;">Preview</button>
                 <button id="btn-render" style="background: #28a745;" disabled>Render</button>
-                <button id="btn-export" style="background: #007acc;" disabled>Export</button>
+                <button id="btn-export" style="background: #007acc; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;" disabled>Export<br>to STL</button>
                 <button id="btn-update-link" style="display: none; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px; background: #8b5cf6;">Update<br>Link</button>
             </div>
             
@@ -189,6 +246,17 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
 
         <div class="right-panel">
             <div id="placeholder-text" style="display: none;"></div>
+            <div id="viewer-project-name"></div>
+            <div id="viewer-toolbar">
+                <button class="vbtn" id="vb-ellipsis" title="Show / hide view tools"><img src="./images/ellipsis_btn.png" alt=""></button>
+                <div id="viewer-toolbar-extra">
+                    <button class="vbtn" id="vb-projection" title="Perspective / Orthographic projection"><img src="./images/ortho_btn.png" alt=""></button>
+                    <button class="vbtn" id="vb-reset" title="Reset camera view"><img src="./images/reset_btn.png" alt=""></button>
+                    <button class="vbtn" id="vb-axes" title="Toggle axes"><img src="./images/axes_btn.png" alt=""></button>
+                    <button class="vbtn" id="vb-grid" title="Toggle grid"><img src="./images/grid_btn.png" alt=""></button>
+                    <button class="vbtn" id="vb-wireframe" title="Wireframe / solid"><img src="./images/wireframe_btn.png" alt=""></button>
+                </div>
+            </div>
             <div id="viewer-3d"></div>
             
             <div id="help-overlay" class="hidden">
@@ -207,8 +275,8 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <li><code>[F5]</code> or <code>[Ctrl]</code> + <code>[Enter]</code> : Preview Model</li>
                         <li><code>[F6]</code> : Render Model</li>
                         <li><code>[F7]</code> : Export to STL/3MF</li>
-                        <li><code>[Ctrl]</code> + <code>[S]</code> : Download Editor Cache as .scad Text File</li>
-                        <li><code>[Ctrl]</code> + <code>[O]</code> : Open .scad File</li>
+                        <li><code>[Ctrl]</code> + <code>[S]</code> : Save to App Files (Save As when untitled)</li>
+                        <li><code>[Ctrl]</code> + <code>[O]</code> : Open from App Files</li>
                     </ul>
 
                     <h3 style="margin-bottom: 8px;">Link Sharing, Workspaces, and Multiple Instances <a href="#" onclick="toggleHelpSection('link-sharing-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
@@ -232,14 +300,11 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <!-- Note 2: external libraries / inlining -->
                         <div style="background-color: rgba(255, 170, 0, 0.15); border-left: 4px solid #ffaa00; padding: 12px 16px; margin-bottom: 20px; border-radius: 0 4px 4px 0;">
                             <div style="font-size: 0.9rem; color: #ddd;">
-                                External libraries are not yet supported. Simpler libraries might be able to be inlined at the bottom of projects. The code editor is configured with special comment-keyword folding. A section wrapped in <code>// REGION</code> / <code>// ENDREGION</code> markers will present as foldable code.
+                            External libraries are now supported.  You can upload libraries contained in zip files in Workspace Settings &rsaquo; Manage Libraries.  The zip file should be named after the library's canonical folder name for compatibility.  For example, if using the MCAD library your uploaded zip file should be named MCAD.zip, and contain MCAD library .scad files, or a folder containing the files.  Either way is supported.  Then, in the example of MCAD, your include line(s) would be:
                             </div>
-                            <pre style="background-color: rgba(0, 0, 0, 0.3); border-radius: 4px; padding: 12px; margin: 12px 0; overflow-x: auto; font-family: monospace; font-size: 0.85rem; color: #ddd; white-space: pre;">// REGION [Your description of the library code to fold here]
-[inlined library code]
-// ENDREGION</pre>
-                            <div style="font-size: 0.9rem; color: #ddd;">
-                                Libraries that are more "flat", with fewer interdependencies, are better candidates for inlining, such as MCAD. BOSL/BOSL2, on the other hand, would need to be flattened, which would be challenging.
-                            </div>
+                            <pre style="background-color: rgba(0, 0, 0, 0.3); border-radius: 4px; padding: 12px; margin: 12px 0; overflow-x: auto; font-family: monospace; font-size: 0.85rem; color: #ddd; white-space: pre;">include &lt;MCAD/filename.scad&gt;</pre>
+                            <!--div style="font-size: 0.9rem; color: #ddd;">
+                            </div-->
                         </div>
 
                     </div>
@@ -256,8 +321,8 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     <code>module name(...) { ... }</code><br>
                     <code>name();</code><br>
                     <code>function name(...) = ...;</code><br>
-                    <code style="text-decoration: line-through; opacity: 0.5;">include &lt;filename.scad&gt;</code> <span style="font-size: 0.8rem; color: #ffaa00;">not yet supported</span><br>
-                    <code style="text-decoration: line-through; opacity: 0.5;">use &lt;filename.scad&gt;</code> <span style="font-size: 0.8rem; color: #ffaa00;">not yet supported</span><br>
+                    <code>include &lt;filename.scad&gt;</code><br>
+                    <code>use &lt;filename.scad&gt;</code><br>
                     <br>
 
                     <h3>2D Shapes</h3>
@@ -366,7 +431,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
     </div>
 
     <div id="settings-overlay" class="overlay hidden">
-        <div class="overlay-content" style="width: 650px; max-width: 95vw;">
+        <div class="overlay-content" style="width: 780px; max-width: 95vw;">
             <button id="btn-close-settings" class="close-btn">&times;</button>
             <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Workspace Settings</h3>
             <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
@@ -416,19 +481,59 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <button id="btn-toggle-debug" class="file-btn" style="width: 120px; background: #dc3545;">Disabled</button>
                     </div>
 
-                    <div class="settings-group">
-                        <label style="font-size: 0.9rem; color: #aaa;">Grid Layout:</label>
-                        <button id="btn-toggle-grid" class="file-btn" style="width: 120px; background: #28a745;">Visible</button>
+                    <div class="settings-group" style="align-items: flex-start;">
+                        <label style="font-size: 0.9rem; color: #aaa; padding-top: 6px;">Grid:</label>
+                        <div style="display: flex; gap: 6px; flex-shrink: 0; align-items: flex-start;">
+                            <button id="btn-toggle-grid" class="file-btn" style="width: 52px; height: 31px; background: #28a745; flex-shrink: 0;">On</button>
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="grid-step-input" min="0" step="any" title="Grid line spacing (mm).&#10;0 disables the grid." style="width: 54px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Step</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="grid-range-input" min="0" step="any" title="Grid overall size (mm), centered on origin.&#10;0 disables the grid." style="width: 68px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Range</div>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="settings-group">
-                        <label style="font-size: 0.9rem; color: #aaa;">Axis Lines:</label>
-                        <button id="btn-toggle-axes" class="file-btn" style="width: 120px; background: #28a745;">Visible</button>
+					<div class="settings-group" style="align-items: flex-start;">
+                        <label style="font-size: 0.9rem; color: #aaa; padding-top: 6px;">Axes:</label>
+                        <div style="display: flex; gap: 6px; flex-shrink: 0; align-items: flex-start;">
+                            <button id="btn-toggle-axes" class="file-btn" style="width: 52px; height: 31px; background: #28a745; flex-shrink: 0;">On</button>
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="axes-step-input" min="0" step="any" title="Marker spacing along each axis (mm).&#10;0 draws axes without markers." style="width: 54px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Step</div>
+                            </div>
+                            
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="axes-range-input" min="0" step="any" title="Axis line length (mm), centered on origin.&#10;0 disables the axes." style="width: 68px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Range</div>
+                            </div>
+                            
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="axes-hash-input" min="0" step="any" title="Marker size (mm).&#10;0 draws axes without markers." style="width: 54px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Mark Size</div>
+                            </div>
+
+                            <div style="display: flex; flex-direction: column;">
+                                <select id="axes-style-select" title="Marker style: 3D Crosshash (+) or Hash (-)" style="width: 48px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 4px 6px; border-radius: 4px; font-size: 0.9rem; outline: none; text-align: center; height: 28px; box-sizing: border-box;">
+                                    <option value="crosshash">+</option>
+                                    <option value="billboard">-</option>
+                                </select>
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Style</div>
+                            </div>
+
+                        </div>
                     </div>
 
                     <div class="settings-group">
                         <label style="font-size: 0.9rem; color: #aaa;">Link Sharing:</label>
                         <button id="btn-toggle-link-sharing" class="file-btn" style="width: 120px; background: #dc3545;">Disabled</button>
+                    </div>
+
+                    <div class="settings-group">
+                        <label style="font-size: 0.9rem; color: #aaa;">Recover Last Workspaces:</label>
+                        <button id="btn-toggle-recover" class="file-btn" style="width: 120px; background: #28a745;">Enabled</button>
                     </div>
                 </div>
 
@@ -436,6 +541,20 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     <div class="settings-group">
                         <label style="font-size: 0.9rem; color: #aaa;">Camera View:</label>
                         <button id="btn-camera-reset" class="file-btn" style="width: 120px; background: #6c757d;">Reset View</button>
+                    </div>
+
+                    <div class="settings-group" style="align-items: flex-start;">
+                        <label style="font-size: 0.9rem; color: #aaa; padding-top: 6px;">Zoom Settings:</label>
+                        <div style="display: flex; gap: 6px; flex-shrink: 0; align-items: flex-start;">
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="zoom-intensity-input" min="0.0001" max="0.05" step="any" title="How far each mouse-wheel notch travels.&#10;Range 0.0001-0.05 (default 0.0015).&#10;Higher = faster zoom." style="width: 68px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Intensity</div>
+                            </div>
+                            <div style="display: flex; flex-direction: column;">
+                                <input type="number" id="zoom-smoothness-input" min="0.01" max="1" step="any" title="Per-frame easing toward the zoom target.&#10;Range 0.01-1 (default 0.15).&#10;Lower = more glide; 1 = instant, no glide." style="width: 68px; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 5px 6px; border-radius: 4px; font-size: 0.85rem; outline: none; text-align: right;">
+                                <div style="font-size: 0.65rem; color: #777; text-align: center; margin-top: 2px;">Smoothness</div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="settings-group">
@@ -456,9 +575,16 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     <hr style="border: 0; border-top: 1px solid #333; margin: 20px 0;">
 
                     <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <button id="btn-open-fonts-menu" class="file-btn" style="width: 100%; background: #007acc;">🔤 Manage Custom Fonts</button>
-                        <button id="btn-open-stls-menu" class="file-btn" style="width: 100%; background: #007acc;">🌐 Manage STL Imports</button>
-                        <button id="btn-open-svgs-menu" class="file-btn" style="width: 100%; background: #007acc;">📐 Manage SVG Imports</button>
+                        <!-- Manage buttons: 2x2 grid (equal columns) to save vertical space -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                            <button id="btn-open-fonts-menu" class="file-btn" style="width: 100%; background: #007acc;">🔤 Custom Fonts</button>
+                            <button id="btn-open-stls-menu" class="file-btn" style="width: 100%; background: #007acc;">🌐 STL Imports</button>
+                            <button id="btn-open-svgs-menu" class="file-btn" style="width: 100%; background: #007acc;">📐 SVG Imports</button>
+                            <button id="btn-open-libs-menu" class="file-btn" style="width: 100%; background: #007acc;">📚 Libraries</button>
+                            <button id="btn-backup-all" class="file-btn" style="width: 100%; background: #4db1b3;">💾 Backup All Data</button>
+                            <button id="btn-restore-all" class="file-btn" style="width: 100%; background: #b34da7;">📥 Restore Backup</button>
+                        </div>
+                        <input type="file" id="backup-restore-upload" accept=".zip" style="display:none;">
                         <button id="btn-settings-cheat-sheet" class="file-btn" style="width: 100%; background: #fce84f; color: #000;">❓ Help & OpenSCAD Cheat Sheet</button>
                         <button id="btn-open-licenses-menu" class="file-btn" style="width: 100%; background: #d97706;">📜 Credits & Licenses</button>
                     </div>
@@ -468,7 +594,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
     </div>
 
     <div id="fonts-overlay" class="overlay hidden">
-        <div class="overlay-content">
+        <div class="overlay-content" style="width: 480px; max-width: 95vw;">
             <button id="btn-close-fonts" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
             <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Fonts Manager</h3>
             <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
@@ -485,7 +611,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
     </div>
 
     <div id="stls-overlay" class="overlay hidden">
-        <div class="overlay-content">
+        <div class="overlay-content" style="width: 480px; max-width: 95vw;">
             <button id="btn-close-stls" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
             <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">STL Manager</h3>
             <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
@@ -500,9 +626,51 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
             </div>
         </div>
     </div>
+	
+	<div id="openfiles-overlay" class="overlay hidden">
+    <div class="overlay-content" style="width: 480px; max-width: 95vw;">
+        <button id="btn-close-openfiles" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">App Files</h3>
+        <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+        <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+            <div style="display: flex; width: 100%; gap: 8px;">
+                <input type="text" id="userfile-name-input" placeholder="file name"
+                    style="flex: 1; background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.9rem; outline: none;">
+                <button id="btn-userfile-save" class="file-btn" style="background: #28a745;">Save As</button>
+            </div>
+            <div id="custom-userfiles-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;"></div>
+            <button id="btn-download-all-zip" class="file-btn" style="width: 100%; background: #444;">⬇ Download All (.zip)</button>
+        </div>
+    </div>
+</div>
+
+	<div id="confirm-overlay" class="overlay hidden" style="z-index: 1100;">
+    <div class="overlay-content" style="width: 340px;">
+        <h3 id="confirm-title" style="margin-top: 0; margin-bottom: 10px; font-size: 1.1rem;">Confirm</h3>
+        <p id="confirm-message" style="color: #ccc; font-size: 0.9rem; margin-bottom: 20px;"></p>
+        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+            <button id="btn-confirm-no" class="file-btn">Cancel</button>
+            <button id="btn-confirm-yes" style="background: #dc3545;">Confirm</button>
+        </div>
+    </div>
+</div>
+
+	<div id="libs-overlay" class="overlay hidden">
+    <div class="overlay-content" style="width: 480px; max-width: 95vw;">
+        <button id="btn-close-libs" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+        <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Library Manager</h3>
+        <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+        <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+            <input type="file" id="lib-upload" accept=".zip" style="display:none;">
+            <button type="button" class="file-btn" onclick="document.getElementById('lib-upload').click()"
+                style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install Library (.zip)</button>
+            <div id="custom-libs-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;"></div>
+        </div>
+    </div>
+</div>
 
     <div id="svgs-overlay" class="overlay hidden">
-        <div class="overlay-content">
+        <div class="overlay-content" style="width: 480px; max-width: 95vw;">
             <button id="btn-close-svgs" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
             <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">SVG Manager</h3>
             <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">

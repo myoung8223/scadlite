@@ -25,7 +25,18 @@
 //     every pass output. Was orphaning `else` blocks (syntax error) whenever
 //     one branch had pass-relevant content and the other didn't.
 //
-//  4. findRootModifier() — new export replacing the inline '!' scan in the
+//  4. include <...> / use <...> support — these statements have no semicolon
+//     and no braces, so the expression scanners previously swallowed them
+//     together with the following statement, and the ghost/highlight passes
+//     could drop them entirely (leaving library modules undefined in those
+//     passes). Both parsers now consume them as standalone statements and
+//     preserve them verbatim in EVERY pass output. (splitTopLevelStatements
+//     and isDefinitionStatement already handled them for the root-modifier
+//     path.) This enables native library support: mount library folders into
+//     the WASM virtual filesystem and include/use resolves exactly as on
+//     desktop OpenSCAD.
+//
+//  5. findRootModifier() — new export replacing the inline '!' scan in the
 //     preview pipeline. String/comment-aware AND prefix-position-aware:
 //     logical-not in expressions (a = !b; if (!x) ...; f(!y); [!a]; c ? !d : e)
 //     no longer falsely triggers root-modifier isolation mode. A '!' counts as
@@ -129,6 +140,19 @@ function isolateHighlights(code) {
         if (isGhost) { skipBody(); return { solid: "", highlight: "" }; }
 
         if (i >= len) return { solid: "", highlight: "" };
+
+        // include <...> / use <...> — standalone statements with NO semicolon
+        // and no braces, so the expression scanner below would swallow them
+        // together with whatever follows. Consume through the closing '>' and
+        // preserve the line in BOTH pass outputs: the highlight pass needs the
+        // library's definitions available for any __HIGHLIGHT__-wrapped calls.
+        if (/^(include|use)(?=[\s<])/.test(code.slice(i, i + 8))) {
+            const stmtStart = i;
+            while (i < len && code[i] !== '>' && code[i] !== '\n') i++;
+            if (i < len && code[i] === '>') i++;
+            const line = code.slice(stmtStart, i);
+            return { solid: line + "\n", highlight: line + "\n" };
+        }
 
         // Bare brace block
         if (code[i] === '{') {
@@ -277,6 +301,18 @@ function isolateHighlights(code) {
 
         const solidParts = children.map(c => c.solid).join("");
         const highlightParts = children.map(c => c.highlight).join("");
+
+        // FIX: module DEFINITIONS must survive into the highlight output with
+        // their full (solid) body, or call sites like `#myModule()` fail with
+        // an unknown-module warning and the highlighted geometry silently
+        // vanishes. (Function definitions already survive via the assignment
+        // path; `use`/`include` lines survive via the include/use handler.)
+        // Note: a `#` INSIDE a module body still gets no highlight treatment —
+        // modifiers belong at the call site — but the definition is intact.
+        if (clean.startsWith('module')) {
+            const def = `${expr}\n{\n${solidParts}}\n`;
+            return { solid: def, highlight: def };
+        }
 
         return {
             solid:     `${expr}\n{\n${solidParts}}\n`,
@@ -457,6 +493,20 @@ function isolateOpenSCADGhosts(code, stripAllGhostsMode = false) {
         }
 		
         if (i >= len) return { solidContent: "", content: "", ghostContent: "", containsGhost: false, hasNestedGhost: false, isSelfGhost: effectiveGhost };
+
+        // include <...> / use <...> — standalone, semicolon-less statements.
+        // Consume through '>' and preserve in ALL pass outputs (mirrors the
+        // assignment pass-through): the ghost pass in particular must keep the
+        // include, or __GHOST__-wrapped calls to library modules will be
+        // undefined in /ghost_input.scad.
+        if (/^(include|use)(?=[\s<])/.test(code.slice(i, i + 8))) {
+            const stmtStart = i;
+            while (i < len && code[i] !== '>' && code[i] !== '\n') i++;
+            if (i < len && code[i] === '>') i++;
+            const line = code.slice(stmtStart, i);
+            return { solidContent: line + "\n", content: line + "\n", ghostContent: line + "\n",
+                     containsGhost: false, hasNestedGhost: false, isSelfGhost: false };
+        }
 
         // --- Bare brace block ---
         if (code[i] === '{') {

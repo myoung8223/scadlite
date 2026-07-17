@@ -1,10 +1,14 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "305";
+const BUILD_NUMBER = "328";
 
 import OpenSCAD from './libs/openscad.js';
 import { isolateHighlights, isolateOpenSCADGhosts, splitTopLevelStatements,
          isDefinitionStatement, collectTopLevelDefinitions,
          findRootModifier } from './preview-transforms.js';
+import { getPersistentLibs, savePersistentLib, deletePersistentLib, clearPersistentLibs,
+         ingestLibraryZip, mountLibrariesIntoInstance, formatLibBytes } from './library-manager.js';
+import { getPersistentUserFiles, savePersistentUserFile, deletePersistentUserFile, clearPersistentUserFiles,
+         mountUserFilesIntoInstance, zipUserFiles, normalizeUserFileName, RESERVED_SCAD_NAMES } from './user-files.js';
 
 // DOM Elements
 const editorElement = document.getElementById('editor'); 
@@ -30,19 +34,244 @@ const btnExportFormat = document.getElementById('btn-export-format');
 
 // 🌐 THREE.JS SCOPE VARIABLES
 let scene, camera, renderer, controls, currentMesh = null;
+// 🎛️ Viewer toolbar state (bottom-left corner buttons)
+let perspCamera = null;        // the master perspective camera (framing math)
+let orthoCamera = null;        // lazily created orthographic sibling
+let isOrthographic = false;    // persisted view mode (openscad_projection), applied post-init
+// NOTE: wireframe state lives in `wireframeMode` (declared with the Settings
+// handler below) — a single source of truth shared by the Settings "Model
+// View" button and the viewer-corner button. It swaps in an UNLIT
+// MeshBasicMaterial for wireframe (lit materials make wire lines shimmer).
+let viewerHeadlight = null;    // headlight rides the ACTIVE camera
 let workspaceInitialized = false;
 let gridHelper = null;
 let axesGroup = null;
 
-let isGridVisible = localStorage.getItem('openscad_grid_visible') !== 'false';
-let isAxesVisible = localStorage.getItem('openscad_axes_visible') !== 'false';
+// 🎢 Smooth Zoom State Variables
+let targetPerspDistance = 40; 
+let targetOrthoZoom = 1;
+// User-tunable zoom (Workspace Settings → Zoom Settings), persisted.
+//   Intensity  = how far each wheel notch travels (exponential per-tick factor)
+//   Smoothness = per-frame easing toward the target; 1 = instant/no glide
+function readZoomSetting(key, fallback, min, max) {
+    const v = parseFloat(localStorage.getItem(key));
+    return (Number.isFinite(v) && v >= min && v <= max) ? v : fallback;
+}
+let zoomIntensity  = readZoomSetting('openscad_zoom_intensity', 0.0015, 0.0001, 0.05);
+let zoomSmoothness = readZoomSetting('openscad_zoom_smoothness', 0.15, 0.01, 1);
+
+// 📐 Parameterized grid/axes (mm). Zero semantics: grid step or range 0 =
+// grid disabled; axes range 0 = axes disabled; axes step or hash 0 = axes
+// drawn without hashmarks. Values persist in localStorage.
+function readViewSetting(key, fallback) {
+    const v = parseFloat(localStorage.getItem(key));
+    return (Number.isFinite(v) && v >= 0) ? v : fallback;
+}
+let gridStep  = readViewSetting('openscad_grid_step', 10);
+let gridRange = readViewSetting('openscad_grid_range', 300);
+let axesStep  = readViewSetting('openscad_axes_step', 1);
+let axesRange = readViewSetting('openscad_axes_range', 300);
+let axesHash  = readViewSetting('openscad_axes_hash', 0.3);
+// One-time migration from the retired Visible/Hidden toggles: a hidden grid
+// becomes range 0 (step kept), hidden axes become range 0.
+if (localStorage.getItem('openscad_grid_visible') === 'false' && localStorage.getItem('openscad_grid_range') === null) {
+    gridRange = 0; localStorage.setItem('openscad_grid_range', '0');
+}
+if (localStorage.getItem('openscad_axes_visible') === 'false' && localStorage.getItem('openscad_axes_range') === null) {
+    axesRange = 0; localStorage.setItem('openscad_axes_range', '0');
+}
+// Explicit visibility (independent of Step/Range geometry). Default on.
+let gridVisible = localStorage.getItem('openscad_grid_on') !== 'false';
+let axesVisible = localStorage.getItem('openscad_axes_on') !== 'false';
+// Migrate the retired "range 0 = hidden" convention into the new boolean,
+// then restore a sane default range so the element can actually show when
+// re-enabled. (Old explicit visible flags, if present, also fold in.)
+if (localStorage.getItem('openscad_grid_on') === null) {
+    if (gridRange === 0 || localStorage.getItem('openscad_grid_visible') === 'false') {
+        gridVisible = false;
+        if (gridRange === 0) { gridRange = 400; localStorage.setItem('openscad_grid_range', '400'); }
+    }
+    localStorage.setItem('openscad_grid_on', gridVisible ? 'true' : 'false');
+}
+if (localStorage.getItem('openscad_axes_on') === null) {
+    if (axesRange === 0 || localStorage.getItem('openscad_axes_visible') === 'false') {
+        axesVisible = false;
+        if (axesRange === 0) { axesRange = 400; localStorage.setItem('openscad_axes_range', '400'); }
+    }
+    localStorage.setItem('openscad_axes_on', axesVisible ? 'true' : 'false');
+}
+localStorage.removeItem('openscad_grid_visible');
+localStorage.removeItem('openscad_axes_visible');
+
+// Rebuild the grid from current settings (disposes any previous grid).
+function rebuildGrid() {
+    if (!scene) return;
+    if (gridHelper) {
+        scene.remove(gridHelper);
+        gridHelper.geometry.dispose();
+        gridHelper.material.dispose();
+        gridHelper = null;
+    }
+    if (gridStep <= 0 || gridRange <= 0) return;
+    const divisions = Math.max(1, Math.round(gridRange / gridStep));
+    gridHelper = new THREE.GridHelper(gridRange, divisions, 0x444444, 0x444444);
+    gridHelper.position.y = 0;
+    // Z-fight fix via draw order, not position: the grid renders early
+    // (renderOrder -1) and does NOT write depth, so the axis lines — drawn
+    // later in the transparency pass — always paint cleanly over it at the
+    // shared z=0 plane. The grid still TESTS depth, so models occlude it
+    // correctly from every angle. (polygonOffset can't help here: it only
+    // applies to triangle fills, not GL lines.)
+    gridHelper.material.depthWrite = false;
+    gridHelper.renderOrder = -1;
+    gridHelper.visible = gridVisible;
+    scene.add(gridHelper);
+    refreshViewerToolbar();
+}
+
+function createDynamicHashmarks(axisDir, maxVal, step, hashLength, colorHex) {
+    const positions = [];
+    const axisDirections = [];
+    const signs = [];
+
+    for (let t = step; t <= maxVal + 1e-9; t += step) {
+        for (const s of [t, -t]) {
+            const anchorX = axisDir.x * s;
+            const anchorY = axisDir.y * s;
+            const anchorZ = axisDir.z * s;
+            
+            // Positive end
+            positions.push(anchorX, anchorY, anchorZ);
+            axisDirections.push(axisDir.x, axisDir.y, axisDir.z);
+            signs.push(1.0);
+
+            // Negative end
+            positions.push(anchorX, anchorY, anchorZ);
+            axisDirections.push(axisDir.x, axisDir.y, axisDir.z);
+            signs.push(-1.0);
+        }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('axisDirection', new THREE.Float32BufferAttribute(axisDirections, 3));
+    geometry.setAttribute('signDir', new THREE.Float32BufferAttribute(signs, 1));
+
+    const material = new THREE.ShaderMaterial({
+        uniforms: {
+            hashLength: { value: hashLength },
+            diffuseColor: { value: new THREE.Color(colorHex) }
+        },
+        vertexShader: `
+            uniform float hashLength;
+            attribute vec3 axisDirection;
+            attribute float signDir;
+            
+            void main() {
+                vec3 viewDir = normalize(cameraPosition - (modelMatrix * vec4(position, 1.0)).xyz);
+                vec3 tickDir = normalize(cross(viewDir, axisDirection));
+                vec3 finalPos = position + tickDir * (signDir * hashLength * 0.5);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(finalPos, 1.0);
+            }
+        `,
+        fragmentShader: `
+            uniform vec3 diffuseColor;
+            void main() { gl_FragColor = vec4(diffuseColor, 1.0); }
+        `,
+        depthTest: true, transparent: true, polygonOffset: true, polygonOffsetFactor: 0.5, polygonOffsetUnits: 0.5
+    });
+
+    return new THREE.LineSegments(geometry, material);
+}
+
+
+// Rebuild the X/Y/Z axes (and hashmarks) from current settings.
+// Scene mapping: OpenSCAD X = Three X (red), OpenSCAD Y = Three Z (green),
+// OpenSCAD Z = Three Y (blue). Hashmarks are short perpendicular segments
+// every `axesStep` mm along each axis, `axesHash` mm long, skipping origin.
+const MAX_AXIS_TICKS = 20000; // per axis — guards against step=0.001-style input
+
+// Global variable to hold the state
+let axesStyle = localStorage.getItem('openscad_axes_style') || 'crosshash'; 
+
+function rebuildAxes() {
+    if (!scene) return;
+    if (axesGroup) {
+        scene.remove(axesGroup);
+        axesGroup.traverse(o => {
+            if (o.geometry) o.geometry.dispose();
+            if (o.material) o.material.dispose();
+        });
+        axesGroup = null;
+    }
+    if (axesRange <= 0) return;
+    axesGroup = new THREE.Group();
+    const half = axesRange / 2;
+    const overlayConfig = (colorHex) => ({ color: colorHex, depthTest: true, transparent: true, polygonOffset: true, polygonOffsetFactor: 0.5, polygonOffsetUnits: 0.5 });
+    const COLOR_X = 0xcc5252, COLOR_Y = 0x52cc7a, COLOR_Z = 0x007acc;
+
+    // Draw main axes lines
+    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-half, 0, 0), new THREE.Vector3(half, 0, 0)]), new THREE.LineBasicMaterial(overlayConfig(COLOR_X))));
+    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -half), new THREE.Vector3(0, 0, half)]), new THREE.LineBasicMaterial(overlayConfig(COLOR_Y))));
+    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -half, 0), new THREE.Vector3(0, half, 0)]), new THREE.LineBasicMaterial(overlayConfig(COLOR_Z))));
+
+    if (axesStep > 0 && axesHash > 0) {
+        if (half / axesStep > MAX_AXIS_TICKS) {
+            logToConsole(`⚠️ Axes step ${axesStep} over range ${axesRange} would draw too many hashmarks — hashmarks skipped.`);
+        } else {
+            
+            if (axesStyle === 'billboard') {
+                // '-' Style: Single Dynamic Hash
+                axesGroup.add(createDynamicHashmarks(new THREE.Vector3(1, 0, 0), half, axesStep, axesHash, COLOR_X));
+                axesGroup.add(createDynamicHashmarks(new THREE.Vector3(0, 0, 1), half, axesStep, axesHash, COLOR_Y));
+                axesGroup.add(createDynamicHashmarks(new THREE.Vector3(0, 1, 0), half, axesStep, axesHash, COLOR_Z));
+            } else {
+                // '+' Style: True 3D Crosshash
+                const h = axesHash / 2;
+                const ptsX = [], ptsY = [], ptsZ = [];
+                for (let t = axesStep; t <= half + 1e-9; t += axesStep) {
+                    for (const s of [t, -t]) {
+                        ptsX.push(new THREE.Vector3(s, 0, -h), new THREE.Vector3(s, 0, h));
+                        ptsX.push(new THREE.Vector3(s, -h, 0), new THREE.Vector3(s, h, 0));
+                        ptsY.push(new THREE.Vector3(-h, 0, s), new THREE.Vector3(h, 0, s));
+                        ptsY.push(new THREE.Vector3(0, -h, s), new THREE.Vector3(0, h, s));
+                        ptsZ.push(new THREE.Vector3(-h, s, 0), new THREE.Vector3(h, s, 0));
+                        ptsZ.push(new THREE.Vector3(0, s, -h), new THREE.Vector3(0, s, h));
+                    }
+                }
+                axesGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(ptsX), new THREE.LineBasicMaterial(overlayConfig(COLOR_X))));
+                axesGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(ptsY), new THREE.LineBasicMaterial(overlayConfig(COLOR_Y))));
+                axesGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(ptsZ), new THREE.LineBasicMaterial(overlayConfig(COLOR_Z))));
+            }
+        }
+    }
+    axesGroup.visible = axesVisible;
+    scene.add(axesGroup);
+    refreshViewerToolbar();
+}
 
 let openSCADFactory = null;
 let currentStlBlob = null; 
 const fontCache = {}; 
 const stlCache = {}; 
 const svgCache = {}; // 📁 NEW: Caches SVG files in memory
+const libCache = {}; // 📚 Caches uploaded OpenSCAD libraries { name: { files, fileCount, scadCount, totalBytes } }
+const userFileCache = {}; // 📄 Caches user .scad files { "myutils.scad": content-string }
+let lastSavedName = null;  // app-FS filename currently backing the editor buffer (null = untitled/unsaved)
+let editorDirty = false;   // buffer modified since last app-FS save/open
+let pendingCameraReset = false; // set when a model is loaded/opened: the next
+                                // scene update frames the camera to the new
+                                // model instead of retaining the old view
 let rawEditorCode = "";
+
+function updateSaveButtonState() {
+    // Grab it directly from the DOM to avoid initialization order issues
+    const saveBtn = document.getElementById('btn-save-appfs');
+    if (saveBtn) {
+        // If dirty, force green. If clean, remove inline style to let CSS handle it.
+        saveBtn.style.background = editorDirty ? '#28a745' : '';
+    }
+}
 
 // ==========================================================================
 // 🗂️ WORKSPACES — two independent, persisted SCAD workspaces: 'main' and 'link'.
@@ -58,12 +287,47 @@ function getActiveWorkspace() {
 }
 function wsStorageKey(ws) { return ws === 'link' ? WS_LINK_KEY : WS_MAIN_KEY; }
 
+// Per-workspace PROJECT NAME keys. Main keeps the historic key so existing
+// stored names and pre-330 backups keep working verbatim; link gets its own.
+function projectNameKey(ws) { return ws === 'link' ? 'openscad_project_name_link' : 'openscad_project_name'; }
+
 // Read/write a workspace's stored code (independent of what's shown in the editor).
 function getWorkspaceCode(ws) { return localStorage.getItem(wsStorageKey(ws)) || ""; }
-function setWorkspaceCode(ws, code) { localStorage.setItem(wsStorageKey(ws), code); }
+function setWorkspaceCode(ws, code) {
+    localStorage.setItem(wsStorageKey(ws), code);
+    if (typeof sessionWsCache !== 'undefined') sessionWsCache[ws] = code;
+}
+
+// Session-scoped view of workspace contents (used for switch-reads when
+// Recover Last Workspaces is disabled). localStorage keeps its two jobs
+// separated: it is ALWAYS written (crash/close safeguard, per keystroke),
+// but with recovery disabled it is never READ into the editor — reads come
+// from this cache, which starts blank each session. null = not yet touched
+// this session.
+const sessionWsCache = { main: null, link: null };
+
+// Per-workspace "last saved as" stash (session-only). `lastSavedName` always
+// holds the ACTIVE workspace's value (it drives the Save overwrite prompt and
+// the My Files ● marker); this map stashes the inactive workspace's value
+// across switches so the marker tracks the buffer it belongs to.
+const sessionLastSaved = { main: null, link: null };
+
+// Read a workspace's code honoring the recovery setting: stored content when
+// recovery is enabled, this session's content (blank if untouched) when not.
+function readWorkspaceForEditor(ws) {
+    if (recoverWorkspaces) return getWorkspaceCode(ws);
+    return sessionWsCache[ws] ?? "";
+}
+
+// Suppresses the per-keystroke persistence while switchWorkspace() loads a
+// workspace into the editor: updateCode() fires the editor's onChange, and
+// without this guard, switching into a blank workspace (recovery disabled)
+// would instantly overwrite its stored copy with "" — no typing involved.
+let suppressWorkspaceSave = false;
 
 // Save whatever's currently in the editor into the active workspace's store.
 function saveActiveWorkspace() {
+    if (suppressWorkspaceSave) return;
     if (!workspaceInitialized) return;   // guard against premature writes during init
     setWorkspaceCode(getActiveWorkspace(), jar.toString());
 }
@@ -71,6 +335,7 @@ function saveActiveWorkspace() {
 let consoleDebugging = localStorage.getItem('openscad_console_debug') === 'enabled';
 let bracketMatchingEnabled = localStorage.getItem('openscad_bracket_matching') !== 'disabled';
 let lineHighlightingEnabled = localStorage.getItem('openscad_line_highlight') !== 'disabled';
+let recoverWorkspaces = localStorage.getItem('openscad_recover_workspaces') !== 'disabled';   // default: enabled
 
 
 
@@ -212,6 +477,8 @@ const jar = (() => {
         // rawEditorCode is always current (no rAF needed anymore).
 		onChange: (view) => {
             rawEditorCode = view.state.doc.toString();
+            editorDirty = true; // cleared on app-FS save/open and system-FS load
+			updateSaveButtonState(); // turn save button green on edit
             saveActiveWorkspace();
             if (typeof refreshUpdateLinkState === 'function') refreshUpdateLinkState();
         }
@@ -237,11 +504,29 @@ function switchWorkspace(target) {
     if (target !== 'main' && target !== 'link') return;
     const current = getActiveWorkspace();
     if (current === target) return;
-    // Save what's on screen into the workspace we're leaving.
-    setWorkspaceCode(current, jar.toString());
-    // Make target active and load its code.
+    // Save what's on screen into the workspace we're leaving — unless this is
+    // an untouched blank visit (recovery disabled, never edited this session,
+    // editor empty): leaving then must not clobber the stored copy with "".
+    const untouchedBlankVisit = !recoverWorkspaces
+        && sessionWsCache[current] === null
+        && jar.toString().trim() === "";
+    if (!untouchedBlankVisit) setWorkspaceCode(current, jar.toString());
+    // Make target active and load its code (honors Recover Last Workspaces:
+    // when disabled, an unvisited workspace loads blank this session instead
+    // of recovering stored content — its localStorage copy stays intact).
     localStorage.setItem(WS_ACTIVE_KEY, target);
-    jar.updateCode(getWorkspaceCode(target));
+    suppressWorkspaceSave = true;
+    try { jar.updateCode(readWorkspaceForEditor(target)); }
+    finally { suppressWorkspaceSave = false; }
+    // Swap document identity along with the buffer. The leaving side's name
+    // is already persisted (the input listener writes per keystroke); the
+    // last-saved marker is stashed/loaded per workspace so the Save overwrite
+    // prompt and ● marker keep tracking the buffer they belong to.
+    sessionLastSaved[current] = lastSavedName;
+    lastSavedName = sessionLastSaved[target] ?? null;
+    activeProjectName = localStorage.getItem(projectNameKey(target)) || '';
+    if (projectNameInput) projectNameInput.value = activeProjectName;
+    updateWindowTitle();
 	if (typeof refreshUpdateLinkState === 'function') refreshUpdateLinkState();
     logToConsole(`🗂️ Switched to ${target === 'link' ? 'Link Sharing' : 'Main'} workspace.`);
     // Preview the newly-loaded workspace.
@@ -303,6 +588,19 @@ function updateWorkspaceButtons() {
     }
 }
 
+const axesStyleSelect = document.getElementById('axes-style-select');
+if (axesStyleSelect) {
+    // 1. Set the dropdown to match the saved preference on load
+    axesStyleSelect.value = axesStyle;
+    
+    // 2. Listen for user changes
+    axesStyleSelect.addEventListener('change', (e) => {
+        axesStyle = e.target.value;
+        localStorage.setItem('openscad_axes_style', axesStyle);
+        rebuildAxes(); // Redraw immediately
+    });
+}
+
 // Settings toggle: enable/disable link sharing.
 if (btnToggleLinkSharing) {
     btnToggleLinkSharing.addEventListener('click', () => {
@@ -336,14 +634,25 @@ if (btnDisableLinkSharing) {
 
 // What's currently encoded in the URL hash (decoded), or null if none.
 function currentUrlModel() {
-    if (!window.location.hash.startsWith('#scad=')) return null;
-    try { return decodeModel(window.location.hash.slice('#scad='.length)); }
+    const parts = parseShareHash();
+    if (!parts.scad) return null;
+    try { return decodeModel(parts.scad); }
     catch (e) { return null; }
+}
+
+// The pn (shared project name) currently in the URL hash, sanitized; '' if none.
+function currentUrlProjectName() {
+    return sanitizeSharedProjectName(parseShareHash().pn);
 }
 
 function refreshUpdateLinkState() {
     if (!btnUpdateLink) return;
-    const isFresh = (jar.toString() === currentUrlModel());
+    // Fresh = BOTH the code and the project name match what the URL carries
+    // (the name is part of the shared artifact). Name read from the DOM input,
+    // which is safe at any point in the module lifecycle.
+    const urlModel = currentUrlModel();
+    const liveName = (projectNameInput ? projectNameInput.value : '').trim();
+    const isFresh = (urlModel !== null) && (jar.toString() === urlModel) && (liveName === currentUrlProjectName());
     if (isFresh) {
         btnUpdateLink.innerHTML = 'Link<br>Updated';
         btnUpdateLink.style.background = '#6c757d';   // gray
@@ -357,16 +666,20 @@ if (btnUpdateLink) {
     btnUpdateLink.addEventListener('click', async () => {
         const activeWs = getActiveWorkspace();
         const code = jar.toString();
+        const name = (projectNameInput ? projectNameInput.value : activeProjectName).trim();
 
-        // If on MAIN: copy main's code into the LINK workspace, but stay on main.
+        // If on MAIN: mirror main's code AND name into the LINK workspace,
+        // but stay on main.
         if (activeWs === 'main') {
             setWorkspaceCode('link', code);
+            localStorage.setItem(projectNameKey('link'), name);
         }
         // (If on LINK, we just re-encode the link content that's already showing.)
 
         try {
             const encoded = encodeModel(code);
-            const url = window.location.origin + window.location.pathname + '#scad=' + encoded;
+            let url = window.location.origin + window.location.pathname + '#scad=' + encoded;
+            if (name) url += '&pn=' + encodeURIComponent(name);
             history.replaceState(null, '', url);   // update address bar, no navigation
             try {
                 await navigator.clipboard.writeText(url);
@@ -407,6 +720,53 @@ if (toggleDebugBtn) {
     };
     applyDebugLayout(consoleDebugging);
     toggleDebugBtn.addEventListener('click', () => applyDebugLayout(!consoleDebugging));
+}
+
+// ==========================================================================
+// 🔁 RECOVER LAST WORKSPACES TOGGLE
+// Enabled (default): fresh instances load the last-saved Main/Link workspace
+// contents from localStorage. Disabled: fresh instances start with a blank
+// editor; the stored workspaces remain intact in localStorage until the
+// user's first edit overwrites the active one. A #scad= share link still
+// loads into the Link workspace regardless of this setting.
+// ==========================================================================
+const toggleRecoverBtn = document.getElementById('btn-toggle-recover');
+if (toggleRecoverBtn) {
+    const applyRecover = (enabled) => {
+        recoverWorkspaces = enabled;
+        localStorage.setItem('openscad_recover_workspaces', enabled ? 'enabled' : 'disabled');
+        toggleRecoverBtn.textContent = enabled ? 'Enabled' : 'Disabled';
+        toggleRecoverBtn.style.backgroundColor = enabled ? '#28a745' : '#dc3545';
+    };
+    applyRecover(recoverWorkspaces);
+    toggleRecoverBtn.addEventListener('click', () => applyRecover(!recoverWorkspaces));
+}
+
+/*
+// ==========================================================================
+// 🪟 NEW WINDOW — opens a fresh SCADLite instance. Uses origin+pathname
+// (never location.href) so a #scad= payload in this window's URL is NOT
+// carried into the new instance's Link workspace.
+// ==========================================================================
+const btnNewWindow = document.getElementById('btn-new-window');
+if (btnNewWindow) {
+    btnNewWindow.addEventListener('click', () => {
+        window.open(window.location.origin + window.location.pathname, '_blank');
+        logToConsole('🪟 Opened a new SCADLite window.');
+    });
+}
+*/
+
+const btnNewWindow = document.getElementById('btn-new-window');
+if (btnNewWindow) {
+    btnNewWindow.addEventListener('click', () => {
+        const url = window.location.origin + window.location.pathname;
+        
+        // 🚀 Adding window features forces PWA app wrapping instead of a browser tab
+        window.open(url, '_blank', 'popup=yes,width=1200,height=800,noopener,noreferrer');
+        
+        logToConsole('🪟 Opened a new SCADLite window.');
+    });
 }
 
 // ==========================================================================
@@ -484,12 +844,24 @@ if (toggleLinesBtn) {
     toggleLinesBtn.addEventListener('click', () => applyLinesLayout(!isLinesEnabled));
 }
 
-let activeProjectName = localStorage.getItem('openscad_project_name') || 'untitled';
+let activeProjectName = localStorage.getItem(projectNameKey(getActiveWorkspace())) || 'untitled';
 
 function updateWindowTitle() { 
     // Fallback to 'untitled' if the user clears the input field entirely
     const displayTitle = activeProjectName.trim() || 'untitled';
-    document.title = `${displayTitle}.scad`; 
+    
+    // Display "SCADLite" for clean bookmarking when no name is set
+    if (displayTitle.toLowerCase() === 'untitled') {
+        document.title = 'SCADLite';
+    } else {
+        document.title = `${displayTitle}.scad`; 
+    }
+    // 3D viewer corner overlay: "<name>.scad" for named projects, or a bare
+    // "untitled" (no .scad) when unnamed.
+    const viewerName = document.getElementById('viewer-project-name');
+    if (viewerName) {
+        viewerName.textContent = displayTitle.toLowerCase() === 'untitled' ? 'untitled' : `${displayTitle}.scad`;
+    }
 }
 
 if (projectNameInput) {
@@ -498,7 +870,7 @@ if (projectNameInput) {
     // 🔌 ADDED: Listen for live updates when the user renames the project
     projectNameInput.addEventListener('input', (event) => {
         activeProjectName = event.target.value; 
-        localStorage.setItem('openscad_project_name', activeProjectName);
+        localStorage.setItem(projectNameKey(getActiveWorkspace()), activeProjectName);
         updateWindowTitle();
     });
 }
@@ -541,41 +913,14 @@ if (btnCameraReset) {
 }
 */
 
-/*
-// 📷 Reusable function to perfectly frame any Three.js mesh
-function frameModelInCamera(mesh) {
-    if (!camera || !controls) return;
-
-    if (mesh && mesh.geometry) {
-        mesh.geometry.computeBoundingBox();
-        const boundingBox = mesh.geometry.boundingBox;
-        
-        const size = new THREE.Vector3();
-        boundingBox.getSize(size);
-        const center = new THREE.Vector3();
-        boundingBox.getCenter(center);
-        
-        const maxDim = Math.max(size.x, size.y, size.z);
-        
-        const padding = 1.2; 
-        const fov = camera.fov * (Math.PI / 180);
-        let cameraDistance = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * padding;
-        
-        if (camera.aspect < 1) cameraDistance /= camera.aspect;
-
-        const viewDirection = new THREE.Vector3(1, 1.2, 1).normalize();
-        camera.position.copy(center).add(viewDirection.multiplyScalar(cameraDistance));
-        
-        controls.target.copy(center); 
-        camera.lookAt(center);
-    } else {
-        camera.position.set(40, 40, 40);
-        controls.target.set(0, 0, 0); 
-        camera.lookAt(0, 0, 0);
+function syncSmoothZoomTargets() {
+    if (perspCamera && controls) {
+        targetPerspDistance = perspCamera.position.distanceTo(controls.target);
     }
-    controls.update();
+    if (orthoCamera) {
+        targetOrthoZoom = orthoCamera.zoom;
+    }
 }
-*/
 
 // 📷 Reusable function to perfectly frame any Three.js mesh or group structure
 function frameModelInCamera(mesh) {
@@ -596,26 +941,118 @@ function frameModelInCamera(mesh) {
         
         // Ensure we handle cases where the object has zero volume/hasn't rendered yet
         const validDim = maxDim > 0 ? maxDim : 50;
-        
-        const padding = 1.2; 
-        const fov = camera.fov * (Math.PI / 180);
-        let cameraDistance = Math.abs(validDim / 2 / Math.tan(fov / 2)) * padding;
-        
-        if (camera.aspect < 1) cameraDistance /= camera.aspect;
+
+        // Effective half-FOV: the camera must fit the model in BOTH the
+        // vertical fov and the aspect-derived horizontal fov, so use the
+        // smaller. Framing math is always PERSPECTIVE-native (perspCamera);
+        // orthographic mode syncs its frustum from the result afterwards.
+        const halfV = (perspCamera.fov * Math.PI / 180) / 2;
+        const halfH = Math.atan(Math.tan(halfV) * perspCamera.aspect);
+        const halfMin = Math.min(halfV, halfH);
+
+        // Composite framing distance: the box estimate (fit maxDim face-on)
+        // under-frames COMPACT shapes seen from our corner-diagonal view —
+        // a sphere/cube's silhouette there is its box DIAGONAL, up to ~1.7x
+        // maxDim — while the diagonal-sphere estimate over-frames ELONGATED
+        // shapes. Averaging the two behaves well at both extremes: spheres
+        // gain breathing room, long parts stay framed as before.
+        const dBox = (validDim / 2) / Math.tan(halfMin);
+        const boundingRadius = (size.length() / 2) || (validDim / 2); // half the box diagonal
+        const dSphere = boundingRadius / Math.sin(halfMin);
+
+        const padding = 1.2;
+        const cameraDistance = ((dBox + dSphere) / 2) * padding;
 
         // Angle the camera slightly down at the model's center bounds
         const viewDirection = new THREE.Vector3(1, 1.2, 1).normalize();
-        camera.position.copy(center).add(viewDirection.multiplyScalar(cameraDistance));
+        perspCamera.position.copy(center).add(viewDirection.multiplyScalar(cameraDistance));
         
         controls.target.copy(center); 
-        camera.lookAt(center);
+        perspCamera.lookAt(center);
     } else {
         // Fallback default position if no model exists on screen
-        camera.position.set(40, 40, 40);
+        perspCamera.position.set(40, 40, 40);
         controls.target.set(0, 0, 0); 
-        camera.lookAt(0, 0, 0);
+        perspCamera.lookAt(0, 0, 0);
     }
+    if (isOrthographic) syncOrthoFromPerspective(); // mirror the new framing
     controls.update();
+    syncSmoothZoomTargets();
+}
+
+// ---------------------------------------------------------------------------
+// 🎛️ PROJECTION MODE (perspective / orthographic)
+// The perspective camera stays the master: all framing math runs on it, and
+// the orthographic camera derives its frustum from the perspective view so
+// the model keeps the same apparent size when toggling. The headlight is
+// parented to whichever camera is active.
+// ---------------------------------------------------------------------------
+function syncOrthoFromPerspective() {
+    if (!perspCamera) return;
+    const dist = perspCamera.position.distanceTo(controls.target);
+    const halfH = dist * Math.tan((perspCamera.fov * Math.PI / 180) / 2);
+    const halfW = halfH * perspCamera.aspect;
+    if (!orthoCamera) {
+        orthoCamera = new THREE.OrthographicCamera(-halfW, halfW, halfH, -halfH, 0.1, 20000);
+    } else {
+        orthoCamera.left = -halfW; orthoCamera.right = halfW;
+        orthoCamera.top = halfH; orthoCamera.bottom = -halfH;
+    }
+    orthoCamera.zoom = 1;
+    orthoCamera.position.copy(perspCamera.position);
+    orthoCamera.up.copy(perspCamera.up);
+    orthoCamera.lookAt(controls.target);
+    orthoCamera.updateProjectionMatrix();
+}
+
+function setProjectionMode(ortho) {
+    if (!scene || !perspCamera) return;
+    if (ortho === isOrthographic) return;
+    if (ortho) {
+        syncOrthoFromPerspective();
+        if (viewerHeadlight) { perspCamera.remove(viewerHeadlight); orthoCamera.add(viewerHeadlight); }
+        scene.add(orthoCamera);
+        camera = orthoCamera;
+    } else {
+        // Preserve apparent size: fold the ortho zoom into perspective distance.
+        if (orthoCamera && orthoCamera.zoom !== 1) {
+            const dir = perspCamera.position.clone().sub(controls.target);
+            perspCamera.position.copy(controls.target).add(dir.multiplyScalar(1 / orthoCamera.zoom));
+        }
+        if (viewerHeadlight && orthoCamera) { orthoCamera.remove(viewerHeadlight); perspCamera.add(viewerHeadlight); }
+        camera = perspCamera;
+    }
+    isOrthographic = ortho;
+    localStorage.setItem('openscad_projection', ortho ? 'orthographic' : 'perspective');
+    controls.object = camera;
+    controls.update();
+    syncSmoothZoomTargets();
+    logToConsole(ortho ? '📐 Orthographic projection enabled.' : '📐 Perspective projection enabled.');
+}
+
+// Projection-aware viewport update used by BOTH resize paths (window resize
+// and the pane splitter). Ortho keeps its current frustum height and adapts
+// width to the new aspect.
+function updateCameraViewport(cw, ch) {
+    if (perspCamera) { perspCamera.aspect = cw / ch; perspCamera.updateProjectionMatrix(); }
+    if (orthoCamera) {
+        const halfH = orthoCamera.top;
+        const halfW = halfH * (cw / ch);
+        orthoCamera.left = -halfW; orthoCamera.right = halfW;
+        orthoCamera.updateProjectionMatrix();
+    }
+    renderer.setSize(cw, ch, true);
+}
+
+// ---------------------------------------------------------------------------
+// 🕸 WIREFRAME (persisted: openscad_wireframe_mode): applied to every material,
+// and re-applied after each canvas update so new previews inherit the mode.
+// ---------------------------------------------------------------------------
+// Applies the current wireframe state to the mesh in the scene. Defined
+// later (with the Settings handler) as applyWireframeToMesh(); this thin
+// wrapper exists because the canvas-update path calls it after each preview.
+function applyWireframeMode() {
+    if (typeof applyWireframeToMesh === 'function') applyWireframeToMesh();
 }
 
 // 🔧 Camera Reset Listener
@@ -625,6 +1062,76 @@ if (btnCameraReset) {
         logToConsole('📷 Camera view reset to object bounds.');
     });
 }
+
+// ===========================================================================
+// 🎛️ VIEWER TOOLBAR — small square buttons at the 3D pane's bottom-left.
+// Session view toggles layered ON TOP of Workspace Settings: the grid/axes
+// buttons flip Three.js visibility only, never the stored step/range values.
+// Expansion state persists in localStorage; the toggles themselves are
+// per-session (matching desktop OpenSCAD's view menu behavior).
+// ===========================================================================
+const vbEllipsis  = document.getElementById('vb-ellipsis');
+const vbExtra     = document.getElementById('viewer-toolbar-extra');
+const vbProjection = document.getElementById('vb-projection');
+const vbReset     = document.getElementById('vb-reset');
+const vbAxes      = document.getElementById('vb-axes');
+const vbGrid      = document.getElementById('vb-grid');
+const vbWireframe = document.getElementById('vb-wireframe');
+
+function setGridVisible(on) {
+    gridVisible = on;
+    localStorage.setItem('openscad_grid_on', on ? 'true' : 'false');
+    if (gridHelper) gridHelper.visible = on;   // toggle live geometry if present
+    else if (on) rebuildGrid();                // was off with valid step/range
+    syncGridAxesButtons();
+    refreshViewerToolbar();
+}
+function setAxesVisible(on) {
+    axesVisible = on;
+    localStorage.setItem('openscad_axes_on', on ? 'true' : 'false');
+    if (axesGroup) axesGroup.visible = on;
+    else if (on) rebuildAxes();
+    syncGridAxesButtons();
+    refreshViewerToolbar();
+}
+// Keep the Workspace Settings On/Off buttons in step with the flags.
+function syncGridAxesButtons() {
+    const btnG = document.getElementById('btn-toggle-grid');
+    if (btnG) { btnG.textContent = gridVisible ? 'On' : 'Off'; btnG.style.background = gridVisible ? '#28a745' : '#dc3545'; }
+    const btnA = document.getElementById('btn-toggle-axes');
+    if (btnA) { btnA.textContent = axesVisible ? 'On' : 'Off'; btnA.style.background = axesVisible ? '#28a745' : '#dc3545'; }
+}
+
+function refreshViewerToolbar() {
+    const setOn = (el, on) => { if (el) el.classList.toggle('vb-on', !!on); };
+    setOn(vbProjection, isOrthographic);
+    setOn(vbWireframe, typeof wireframeMode !== 'undefined' && wireframeMode);
+    setOn(vbAxes, axesVisible);
+    setOn(vbGrid, gridVisible);
+}
+
+if (vbEllipsis && vbExtra) {
+    const applyExpanded = (expanded) => {
+        vbExtra.style.display = expanded ? 'flex' : 'none';
+        vbEllipsis.classList.toggle('vb-on', expanded);
+        localStorage.setItem('openscad_viewbar_expanded', expanded ? 'true' : 'false');
+    };
+    applyExpanded(localStorage.getItem('openscad_viewbar_expanded') !== 'false');
+    vbEllipsis.addEventListener('click', () => {
+        applyExpanded(vbExtra.style.display === 'none');
+    });
+}
+if (vbProjection) vbProjection.addEventListener('click', () => {
+    setProjectionMode(!isOrthographic);
+    refreshViewerToolbar();
+});
+if (vbReset) vbReset.addEventListener('click', () => {
+    frameModelInCamera(currentMesh);
+    logToConsole('📷 Camera view reset to object bounds.');
+});
+if (vbAxes) vbAxes.addEventListener('click', () => setAxesVisible(!axesVisible));
+if (vbGrid) vbGrid.addEventListener('click', () => setGridVisible(!gridVisible));
+if (vbWireframe) vbWireframe.addEventListener('click', () => setWireframeMode(!wireframeMode));
 
 const savedColorHexStr = localStorage.getItem('openscad_model_color') || '#3b82f6';
 if (modelColorInput) modelColorInput.value = savedColorHexStr;
@@ -659,13 +1166,37 @@ function decodeModel(str) {
     return fflate.strFromU8(fflate.gunzipSync(bytes));
 }
 
+// Parse the share hash into its params: #scad=<blob>[&pn=<name>] -> { scad, pn }.
+// Splitting on '&' is unambiguous: the blob's base64url alphabet is
+// [A-Za-z0-9-_] and encodeURIComponent escapes '&' inside names.
+function parseShareHash() {
+    const parts = {};
+    if (!window.location.hash.startsWith('#')) return parts;
+    for (const seg of window.location.hash.slice(1).split('&')) {
+        const eq = seg.indexOf('=');
+        if (eq > 0) parts[seg.slice(0, eq)] = seg.slice(eq + 1);
+    }
+    return parts;
+}
+
+// Sanitize a pn value arriving from a URL: percent-decode, strip control
+// characters, trim, cap length. It only ever lands in input.value /
+// document.title / textContent sinks, so this is belt-and-suspenders;
+// normalizeUserFileName still guards the path to an actual filename.
+function sanitizeSharedProjectName(raw) {
+    if (!raw) return '';
+    let name;
+    try { name = decodeURIComponent(raw); } catch (e) { return ''; }
+    return name.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 80);
+}
+
 // ---- FILE OPERATIONS ----
 btnSave.addEventListener('click', () => {
     const blob = new Blob([jar.toString()], { type: 'text/plain' });
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
     let safeFilename = activeProjectName.trim().replace(/\.scad$/i, '') || "untitled"; 
     link.download = `${safeFilename}.scad`; link.click();
-    logToConsole(`Saved ${safeFilename}.scad successfully.`);
+    logToConsole(`⬇️ Downloaded ${safeFilename}.scad to your system.`);
 });
 
 fileLoad.addEventListener('change', (event) => {
@@ -677,20 +1208,38 @@ fileLoad.addEventListener('change', (event) => {
         logToConsole(`Loaded file: ${file.name}`);
         localStorage.setItem('openscad_editor_cache', e.target.result);
         activeProjectName = file.name.replace(/\.scad$/i, '');
-        localStorage.setItem('openscad_project_name', activeProjectName);
+        localStorage.setItem(projectNameKey(getActiveWorkspace()), activeProjectName);
         if (projectNameInput) projectNameInput.value = activeProjectName;
         updateWindowTitle();
+        lastSavedName = null;   // system file isn't (yet) an app-FS document
+        editorDirty = false;
+		updateSaveButtonState(); // turn the save button gray
+        pendingCameraReset = true; // frame the camera to the newly loaded model
         if (typeof btnPreview !== 'undefined' && !btnPreview.disabled) btnPreview.click();
     };
     reader.readAsText(file);
 });
 
 let wireframeMode = false;
-btnWireframe.addEventListener('click', () => {
-    wireframeMode = !wireframeMode; 
-    btnWireframe.textContent = wireframeMode ? 'Wireframe' : 'Solid';
-    btnWireframe.style.background = wireframeMode ? '#444' : '#007acc';  
-    
+
+// Single entry point for BOTH the Settings "Model View" button and the
+// viewer-corner button: updates state, both button UIs, and the mesh.
+function setWireframeMode(on) {
+    wireframeMode = on;
+    localStorage.setItem('openscad_wireframe_mode', on ? 'enabled' : 'disabled');
+    if (btnWireframe) {
+        btnWireframe.textContent = on ? 'Wireframe' : 'Solid';
+        btnWireframe.style.background = on ? '#444' : '#007acc';
+    }
+    applyWireframeToMesh();
+    if (typeof refreshViewerToolbar === 'function') refreshViewerToolbar();
+}
+
+// Swaps between the cached lit material and an UNLIT wireframe material.
+// Using MeshBasicMaterial (unlit) is what keeps wire lines crisp — flipping
+// .wireframe on a lit MeshStandardMaterial makes the lines shimmer as the
+// lighting shades them.
+function applyWireframeToMesh() {
     if (currentMesh) {
         currentMesh.traverse((child) => {
             if (child.isMesh && child.material) {
@@ -724,7 +1273,9 @@ btnWireframe.addEventListener('click', () => {
             }
         });
     }
-});
+}
+
+if (btnWireframe) btnWireframe.addEventListener('click', () => setWireframeMode(!wireframeMode));
 
 window.addEventListener('keydown', (event) => {
 	
@@ -782,19 +1333,17 @@ window.addEventListener('keydown', (event) => {
     if (event.ctrlKey && event.key.toLowerCase() === 's') {
         event.preventDefault(); // Stops browser "Save Page As"
         event.stopImmediatePropagation();
-        if (btnSave && !btnSave.disabled) {
-            logToConsole('⌨️ Hotkey Triggered: [Ctrl] + [S] (Save)');
-            btnSave.click();
-        }
+        logToConsole('⌨️ Hotkey Triggered: [Ctrl] + [S] (Save to App Files)');
+        saveCurrentToAppFS();
     }
 
     // 📂 Open File [Ctrl] + [O]
     if (event.ctrlKey && event.key.toLowerCase() === 'o') {
         event.preventDefault(); // Stops browser "Open Local File"
         event.stopImmediatePropagation();
-        if (fileLoad) {
-            logToConsole('⌨️ Hotkey Triggered: [Ctrl] + [O] (Open)');
-            fileLoad.click();
+        {
+            logToConsole('⌨️ Hotkey Triggered: [Ctrl] + [O] (Open from App Files)');
+            openUserFilesOverlay(false);
         }
     }
 
@@ -848,6 +1397,10 @@ if (btnExportFormat) {
         
         // Blue = 3MF (carries color); neutral gray = STL (geometry only)
         btnExportFormat.style.background = (fmt === '3MF') ? '#007acc' : '#6c757d';
+
+        // Toolbar Export button mirrors the target format as a two-liner
+        // ("Export" / "to STL"), matching the New Window button's styling.
+        if (btnExport) btnExport.innerHTML = `Export<br>to ${fmt}`;
     };
     applyExportFormat(exportFormat);
     btnExportFormat.addEventListener('click', () => {
@@ -870,15 +1423,20 @@ async function initOpenSCAD() {
 
 	// 🔗 Shared link: if the URL carries a model, load it into the LINK workspace
     // (never main), make link active, and let the normal loader show it.
+    let sharedLinkLoaded = false;
     if (window.location.hash.startsWith('#scad=')) {
         try {
-            const encoded = window.location.hash.slice('#scad='.length);
-            const decoded = decodeModel(encoded);
+            const hashParts = parseShareHash();
+            const decoded = decodeModel(hashParts.scad || '');
             if (decoded && decoded.trim() !== "") {
                 setWorkspaceCode('link', decoded);
+                sharedLinkLoaded = true;
 				localStorage.setItem('openscad_link_sharing', 'enabled');
 				linkSharingEnabled = true;
                 localStorage.setItem(WS_ACTIVE_KEY, 'link');
+                // Optional pn param -> the link workspace's project name;
+                // absent pn clears it (shared content = fresh identity).
+                localStorage.setItem(projectNameKey('link'), sanitizeSharedProjectName(hashParts.pn));
                 logToConsole('🔗 Shared model loaded into Link Sharing workspace.');
             }
         } catch (err) {
@@ -893,13 +1451,18 @@ async function initOpenSCAD() {
     }
 
     const activeWs = getActiveWorkspace();
-    const activeCode = getWorkspaceCode(activeWs);
+    // Recover Last Workspaces disabled -> start blank (stored workspaces stay
+    // intact until the first edit). A decoded share link always loads.
+    if (!recoverWorkspaces && !sharedLinkLoaded) {
+        logToConsole('ℹ️ Recover Last Workspaces is disabled — starting with a blank editor.');
+    }
+    const activeCode = (recoverWorkspaces || sharedLinkLoaded) ? getWorkspaceCode(activeWs) : "";
     if (activeCode && activeCode.trim() !== "") {
         jar.updateCode(activeCode);
-    } else if (activeWs === 'main') {
+    } else if (activeWs === 'main' && recoverWorkspaces) {
         //jar.updateCode(`linear_extrude(height = 4) {\n\ttext(\n\t\ttext = "Hello, world!", \n\t\tsize = 14, \n\t\tfont = "Liberation Sans:style=Bold", \n\t\thalign = "center", \n\t\tvalign = "center"\n\t);\n}`); 
 
-jar.updateCode(`$fn = 25;   // number of segments set to 25
+jar.updateCode(`$fn = $preview ? 20 : 100;   // set fragments number to 20 for preview and 100 for render
 
 linear_extrude(height = 4) {   // 3D text
 	text(
@@ -913,7 +1476,7 @@ linear_extrude(height = 4) {   // 3D text
 
 translate([-100, 10, 0])
 rotate([0, 0, 270]) {
-	%cube(20);            // demo transparency modifier, %
+	%cube(20);          // demo transparency modifier, %
 	cube(10);
 }
 
@@ -936,11 +1499,11 @@ cube([25, 25, 25], center=true);   // cube
 
 color([0.0, 0.8, 0.0, 1])
 translate([0, -40, 0])	
-cylinder(d1=25, d2=0, h=30);   // conic cylinder
+cylinder(d1=25, d2=0, h=30);   // cone
 
 color([0.8, 0.8, 0.4, 1])
 translate([88, 0, 0])	
-difference() {                    // conic cylinder cup
+difference() {                      // conic cylinder cup
 	cylinder(d1=15, d2=20, h=20);
 	translate([0, 0, 0.5])
 	cylinder(d1=14, d2=17, h=20);
@@ -948,10 +1511,10 @@ difference() {                    // conic cylinder cup
 
 color([0.8, 0.8, 0.8, 1])
 translate([50, -40, 0])
-hull() {                                 // hull example (D6 die)
+hull() {                                   // hull example (D6 die)
 	translate([-8, -8, -8]) sphere(d=4);
 	translate([8, -8, -8]) sphere(d=4);
-	translate([-8, 8, -8]) sphere(d=4);
+	*translate([-8, 8, -8]) sphere(d=4);   // demo disable modifier, *
 	translate([8, 8, -8]) sphere(d=4);
 	translate([-8, -8, 8]) sphere(d=4);
 	#translate([8, -8, 8]) sphere(d=4);   // demo highlight modifier, #
@@ -962,6 +1525,27 @@ hull() {                                 // hull example (D6 die)
     } else {
         jar.updateCode("");   // active workspace (link) is empty → blank editor
     }
+
+	// Project-name recovery: document identity persists across sessions
+    // alongside the workspace buffers (per-workspace keys), gated by the same
+    // Recover Last Workspaces setting. Also adopted when a shared link just
+    // loaded (its pn/cleared name was written above) or a backup restore just
+    // completed (that flag is consumed by the backup section's post-reload
+    // notice at the bottom of this file — it evaluates after this synchronous
+    // portion runs). With recovery disabled and no arriving link, a session
+    // starts fresh: blank editor, blank names in BOTH workspaces.
+    if (recoverWorkspaces || sharedLinkLoaded || sessionStorage.getItem('openscad_restore_notice')) {
+        activeProjectName = localStorage.getItem(projectNameKey(getActiveWorkspace())) || '';
+    } else {
+        activeProjectName = '';
+        localStorage.setItem(projectNameKey('main'), '');
+        localStorage.setItem(projectNameKey('link'), '');
+    }
+    if (projectNameInput) projectNameInput.value = activeProjectName;
+    lastSavedName = null;
+    editorDirty = true;
+    updateSaveButtonState();
+    updateWindowTitle();
 	
     if (typeof triggerLineUpdate === 'function') triggerLineUpdate();
     
@@ -1004,6 +1588,20 @@ hull() {                                 // hull example (D6 die)
             if (customSvgs.length > 0) logToConsole(`✔ Restored ${customSvgs.length} custom SVG(s) from local DB.`);
         } catch (err) { console.error(err); }
 
+		// Restore OpenSCAD Libraries
+        try {
+            const customLibs = await getPersistentLibs();
+            for (const lib of customLibs) libCache[lib.name] = { files: lib.files, fileCount: lib.fileCount, scadCount: lib.scadCount, totalBytes: lib.totalBytes };
+            if (customLibs.length > 0) logToConsole(`✔ Restored ${customLibs.length} OpenSCAD librar${customLibs.length === 1 ? 'y' : 'ies'} from local DB.`);
+        } catch (err) { console.error(err); }
+
+		// Restore user .scad files (My Files)
+        try {
+            const storedFiles = await getPersistentUserFiles();
+            for (const f of storedFiles) userFileCache[f.name] = f.content;
+            if (storedFiles.length > 0) logToConsole(`✔ Restored ${storedFiles.length} user file(s) from local DB.`);
+        } catch (err) { console.error(err); }
+
 		logToConsole('✅ Engine ready! Alter code and click Preview freely.');
         btnPreview.disabled = false;
         btnRender.disabled = false;
@@ -1028,15 +1626,11 @@ btnPreview.addEventListener('click', async () => {
 	const scriptCode = jar.toString();
     const errorLogs = [];
 
-    // Isolate % modifiers (ignoring math modulo operations)
-    const ghostRegex = /%(?=\s*(cube|sphere|cylinder|polyhedron|square|circle|polygon|translate|rotate|scale|resize|mirror|multmatrix|color|offset|hull|minkowski|union|difference|intersection|for|intersection_for|if|linear_extrude|rotate_extrude|surface|projection|render|text|import)\b)/g;
-    const hasGhost = ghostRegex.test(scriptCode);
-    ghostRegex.lastIndex = 0;
-
-    // Detect # highlight modifiers
-    const highlightRegex = /#(?=\s*(cube|sphere|cylinder|polyhedron|square|circle|polygon|translate|rotate|scale|resize|mirror|multmatrix|color|offset|hull|minkowski|union|difference|intersection|for|intersection_for|if|linear_extrude|rotate_extrude|surface|projection|render|text|import)\b)/g;
-    const hasHighlight = highlightRegex.test(scriptCode);
-    highlightRegex.lastIndex = 0;
+    // %/# modifier detection happens AFTER root-modifier isolation below, and
+    // is derived from the transform output itself (not a name whitelist): the
+    // old regexes only recognized modifiers on BUILT-IN module names, so
+    // %cuboid(...) (BOSL2), %gear(...) (MCAD), or %myModule(...) (user-defined)
+    // never triggered the ghost/highlight passes at all.
 
 	// Check for ! root modifier — if present, bypass parser for solid pass
     // '!' root-modifier scan now lives in preview-transforms.js —
@@ -1087,7 +1681,20 @@ btnPreview.addEventListener('click', async () => {
 	
 	    isolatedSource = definitions + '\n' + afterBang.slice(0, statementEnd);
 	}
-	
+
+    // --- Position-aware %/# detection (single source of truth) ---
+    // Run the pass transforms once, up front, and gate each pass on whether
+    // its transform actually produced any wrapped geometry. This inherits all
+    // of preview-transforms.js's statement/position awareness: modulo `%`,
+    // hex-color `#`, and modifiers on ANY module name (built-in, library, or
+    // user-defined) are all classified correctly. The pass blocks below reuse
+    // these strings, so the transforms still run exactly once per preview.
+    const passSource = isolatedSource ?? scriptCode;
+    const cleanGhostCode = isolateOpenSCADGhosts(passSource);
+    const hasGhost = /(^|\n)\s*__GHOST__\(\)/.test(cleanGhostCode);
+    const cleanHighlightCode = isolateHighlights(passSource);
+    const hasHighlight = /(^|\n)\s*__HIGHLIGHT__\(\)/.test(cleanHighlightCode);
+
     try {
         // --- INSTANCE SETTINGS BUILDER FUNCTION ---
         const createWasmInstance = async () => {
@@ -1125,6 +1732,8 @@ btnPreview.addEventListener('click', async () => {
             for (const svgName of Object.keys(svgCache)) {
                 try { instance.FS.writeFile(`/${svgName}`, new Uint8Array(svgCache[svgName])); } catch (e) {}
             }
+            mountUserFilesIntoInstance(instance, userFileCache); // 📄 user project files
+            mountLibrariesIntoInstance(instance, libCache); // 📚 include/use resolution
         };
 
 		// ---------------------------------------------------------
@@ -1152,6 +1761,9 @@ btnPreview.addEventListener('click', async () => {
                 const m = l.match(/line\s+(\d+)/i);
                 if (m) { errLine = parseInt(m[1], 10); errMsg = l.trim(); break; }
             }
+            // Compensate for the injected "$preview = true;" first line in
+            // /check.scad: reported lines are one below the editor's.
+            if (errLine !== null && errLine > 1) errLine -= 1;
             if (errLine) highlightErrorLine(errLine, errMsg);
             if (placeholderText) {
                 placeholderText.textContent = "❌ Code Error (Check Console)";
@@ -1204,9 +1816,8 @@ btnPreview.addEventListener('click', async () => {
 
             logToConsole("📥 Running structural scope parsing to isolate ghost layers...");
 			
-			// Use isolated ! subtree for ghost pass if present, otherwise full source
-            const ghostSource = isolatedSource ?? scriptCode;
-            const cleanGhostCode = isolateOpenSCADGhosts(ghostSource);
+			// cleanGhostCode was computed up front (detection stage) from
+			// isolatedSource ?? scriptCode — reused here, not recomputed.
 			const ghostModuleHeader = `module __GHOST__() { color([0.987, 0.012, 0.876]) children(); }\n\n`;
             const ghostCode = ghostModuleHeader + cleanGhostCode;
             
@@ -1239,8 +1850,7 @@ btnPreview.addEventListener('click', async () => {
 
             logToConsole("📥 Running structural scope parsing to isolate highlight layers...");
 
-            const highlightSource = isolatedSource ?? scriptCode;
-            const cleanHighlightCode = isolateHighlights(highlightSource);
+            // cleanHighlightCode was computed up front (detection stage).
             const highlightModuleHeader = `module __HIGHLIGHT__() { color([1.0, 0.3, 0.3, 0.5]) children(); }\n\n`;
             const highlightCode = highlightModuleHeader + cleanHighlightCode;
 
@@ -1272,6 +1882,13 @@ btnPreview.addEventListener('click', async () => {
             if (scriptCode.trim() === '' || errorLogs.some(l => l.includes('Current top level object is empty'))) {
                 update3DModelViewer(null, null, null);
                 if (placeholderText) placeholderText.style.display = 'none';
+            } else if (errorLogs.some(l => l.includes('not a 3D object'))) {
+                // 2D top-level geometry (circle, square, MCAD 2Dshapes, etc.) —
+                // valid OpenSCAD, and desktop's viewport can display it, but this
+                // pipeline compiles to 3MF meshes, which require 3D geometry.
+                if (placeholderText) placeholderText.textContent = "⬛ 2D Shape (Check Console)";
+                logToConsole('ℹ️ Your model produces 2D geometry, which the 3D viewport cannot display.');
+                logToConsole('   Wrap it in linear_extrude() to give it height, e.g.:  linear_extrude(2) yourShape();');
             } else {
                 if (placeholderText) placeholderText.textContent = "❌ Preview Failed (Check Console)";
                 let detectedErrorLine = null;
@@ -1354,6 +1971,8 @@ btnRender.addEventListener('click', async () => {
         for (const svgName of Object.keys(svgCache)) {
             try { renderInstance.FS.writeFile(`/${svgName}`, new Uint8Array(svgCache[svgName])); } catch (e) {}
         }
+        mountUserFilesIntoInstance(renderInstance, userFileCache); // 📄
+        mountLibrariesIntoInstance(renderInstance, libCache); // 📚
 
         // Single pass — raw code straight to WASM, % handled natively (ignored)
         renderInstance.FS.writeFile('/render_input.scad', renderCode);
@@ -1382,6 +2001,10 @@ btnRender.addEventListener('click', async () => {
                     placeholderText.style.display = 'flex';
                 }
             } else {
+                if (errorLogs.some(l => l.includes('not a 3D object'))) {
+                    logToConsole('ℹ️ Your model produces 2D geometry, which the 3D viewport cannot display.');
+                    logToConsole('   Wrap it in linear_extrude() to give it height, e.g.:  linear_extrude(2) yourShape();');
+                }
                 if (placeholderText) placeholderText.textContent = "❌ Render Failed (Check Console)";
                 let detectedErrorLine = null;
                 for (const logLine of errorLogs) {
@@ -1438,6 +2061,8 @@ btnExport.addEventListener('click', async () => {
         for (const svgName of Object.keys(svgCache)) {
             try { exportInstance.FS.writeFile(`/${svgName}`, new Uint8Array(svgCache[svgName])); } catch (e) {}
         }
+        mountUserFilesIntoInstance(exportInstance, userFileCache); // 📄
+        mountLibrariesIntoInstance(exportInstance, libCache); // 📚
 
         // Single raw pass — identical semantics to Render (F6): % ignored, no ghost/highlight
         exportInstance.FS.writeFile('/export_input.scad', exportCode);
@@ -1513,24 +2138,45 @@ function init3DWorkspace() {
 
     scene = new THREE.Scene(); scene.background = new THREE.Color(0x222222);
     camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 10000); camera.position.set(40, 40, 40);
+    perspCamera = camera; // master camera: all framing math is perspective-native
     renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setSize(w, h); renderer.setPixelRatio(window.devicePixelRatio); 
     container.appendChild(renderer.domElement);
-    controls = new THREE.OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.1;
+    controls = new THREE.OrbitControls(camera, renderer.domElement); 
+    controls.enableDamping = true; controls.dampingFactor = 0.1;
+    // NOTE: native zoom stays ENABLED so touch pinch-zoom keeps working
+    // (enableZoom = false would kill pinch on touchscreens, not just the
+    // wheel). The wheel is intercepted below in CAPTURE phase with
+    // stopPropagation, so OrbitControls never sees wheel events — mouse
+    // wheel gets the custom smooth zoom, touch keeps the native pinch.
 
-    gridHelper = new THREE.GridHelper(400, 40, 0x444444, 0x444444);
-    gridHelper.position.y = 0; gridHelper.material.polygonOffset = true; gridHelper.material.polygonOffsetFactor = 1; gridHelper.material.polygonOffsetUnits = 1;
-    scene.add(gridHelper);
+    // Suppress the smooth-zoom lerp while OrbitControls owns an active
+    // gesture (pinch/rotate), and re-sync targets when the gesture ends —
+    // otherwise the lerp fights a pinch with stale targets.
+    let controlsInteracting = false;
+    controls.addEventListener('start', () => { controlsInteracting = true; });
+    controls.addEventListener('end', () => { controlsInteracting = false; syncSmoothZoomTargets(); });
+    window.__scadliteControlsInteracting = () => controlsInteracting;
 
-    axesGroup = new THREE.Group();
-    const gridHalfSize = 200;
-    const overlayConfig = (colorHex) => ({ color: colorHex, depthTest: true, transparent: true, polygonOffset: true, polygonOffsetFactor: 0.5, polygonOffsetUnits: 0.5 });
-    
-    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-gridHalfSize, 0, 0), new THREE.Vector3(gridHalfSize, 0, 0)]), new THREE.LineBasicMaterial(overlayConfig(0xcc5252))));
-    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, -gridHalfSize), new THREE.Vector3(0, 0, gridHalfSize)]), new THREE.LineBasicMaterial(overlayConfig(0x52cc7a))));
-    axesGroup.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, -gridHalfSize, 0), new THREE.Vector3(0, gridHalfSize, 0)]), new THREE.LineBasicMaterial(overlayConfig(0x007acc))));
-    scene.add(axesGroup);
-    
-    gridHelper.visible = isGridVisible; axesGroup.visible = isAxesVisible;
+    // Listen for mouse wheel on the 3D container (capture: runs before, and
+    // blocks, OrbitControls' own wheel handler on the canvas)
+    container.addEventListener('wheel', (event) => {
+        event.preventDefault();     // Stop the whole page from scrolling
+        event.stopPropagation();    // Keep OrbitControls' dolly out of it
+
+        if (isOrthographic && orthoCamera) {
+            targetOrthoZoom *= Math.pow(1 + zoomIntensity, -event.deltaY);
+            targetOrthoZoom = Math.max(0.1, Math.min(targetOrthoZoom, 5000));
+        } else if (perspCamera) {
+            targetPerspDistance *= Math.pow(1 + zoomIntensity, event.deltaY);
+            targetPerspDistance = Math.max(0.5, Math.min(targetPerspDistance, 20000));
+        }
+    }, { passive: false, capture: true });
+
+    syncSmoothZoomTargets(); // align targets with the STARTING camera so the
+                             // first wheel tick doesn't lurch toward stale values
+
+    rebuildGrid();
+    rebuildAxes();
     
     const compassContainer = document.createElement('div');
     compassContainer.style.position = 'absolute'; compassContainer.style.top = '10px'; compassContainer.style.right = '10px'; compassContainer.style.width = '80px'; compassContainer.style.height = '80px'; compassContainer.style.zIndex = '100'; compassContainer.style.pointerEvents = 'none'; 
@@ -1559,15 +2205,37 @@ function init3DWorkspace() {
     const keyLight = new THREE.DirectionalLight(0xffffff, 0.5); keyLight.position.set(150, 200, 100); scene.add(keyLight);
     const topLight = new THREE.DirectionalLight(0xffffff, 0.15); topLight.position.set(0, 250, 0); scene.add(topLight);
     const headlight = new THREE.DirectionalLight(0xffffff, 0.45); headlight.position.set(0, 0, 1); camera.add(headlight); scene.add(camera); 
+    viewerHeadlight = headlight; // migrated between cameras on projection toggle
     
     function animate() {
         requestAnimationFrame(animate);
         const cw = container.clientWidth, ch = container.clientHeight;
         const currentSize = new THREE.Vector2(); renderer.getSize(currentSize);
         if (cw > 0 && ch > 0 && (currentSize.x !== cw || currentSize.y !== ch)) {
-            camera.aspect = cw / ch; camera.updateProjectionMatrix(); renderer.setSize(cw, ch, true);
+            updateCameraViewport(cw, ch);
         }
-        controls.update(); renderer.render(scene, camera);
+
+        // --- 🎢 EXECUTE SMOOTH ZOOM LERPING ---
+        // (paused while OrbitControls owns a gesture, e.g. touch pinch)
+        const zoomLerpPaused = typeof window.__scadliteControlsInteracting === 'function' && window.__scadliteControlsInteracting();
+        if (zoomLerpPaused) {
+            // targets re-sync on gesture end; nothing to lerp meanwhile
+        } else if (isOrthographic && orthoCamera) {
+            if (Math.abs(orthoCamera.zoom - targetOrthoZoom) > 0.001) {
+                orthoCamera.zoom += (targetOrthoZoom - orthoCamera.zoom) * zoomSmoothness;
+                orthoCamera.updateProjectionMatrix();
+            }
+        } else if (perspCamera) {
+            const currentDist = perspCamera.position.distanceTo(controls.target);
+            if (Math.abs(currentDist - targetPerspDistance) > 0.001) {
+                const newDist = currentDist + (targetPerspDistance - currentDist) * zoomSmoothness;
+                const dir = new THREE.Vector3().subVectors(perspCamera.position, controls.target).normalize();
+                perspCamera.position.copy(controls.target).add(dir.multiplyScalar(newDist));
+            }
+        }
+
+        controls.update(); 
+        renderer.render(scene, camera);
 
         if (compassCamera && compassRenderer) {
             compassCamera.position.copy(camera.position); compassCamera.position.sub(controls.target); compassCamera.position.setLength(60); compassCamera.lookAt(0, 0, 0);
@@ -1716,7 +2384,7 @@ function update3DModelViewer(solidData, ghostData = null, highlightData = null) 
 
                             mat.roughness = 0.5;
                             mat.metalness = 0.1;
-                            if (typeof wireframeMode !== 'undefined') mat.wireframe = wireframeMode;
+                            // (wireframe handled by applyWireframeMode() after load — it swaps in an UNLIT material)
                             mat.needsUpdate = true;
                         });
 
@@ -1759,9 +2427,6 @@ function update3DModelViewer(solidData, ghostData = null, highlightData = null) 
                             metalness: 0.1
                         });
 
-                        if (typeof wireframeMode !== 'undefined') {
-                            glassMaterial.wireframe = wireframeMode;
-                        }
 
                         if (Array.isArray(child.material)) {
                             child.material = child.material.map(() => glassMaterial.clone());
@@ -1826,9 +2491,6 @@ function update3DModelViewer(solidData, ghostData = null, highlightData = null) 
                             emissiveIntensity: 0.4
                         });
 
-                        if (typeof wireframeMode !== 'undefined') {
-                            highlightMaterial.wireframe = wireframeMode;
-                        }
 
                         if (Array.isArray(child.material)) {
                             child.material = child.material.map(() => highlightMaterial.clone());
@@ -1874,9 +2536,6 @@ function update3DModelViewer(solidData, ghostData = null, highlightData = null) 
                             metalness: 0.2
                         });
 
-                        if (typeof wireframeMode !== 'undefined') {
-                            debugMaterial.wireframe = wireframeMode;
-                        }
 
                         // Override material arrays safely
                         if (Array.isArray(child.material)) {
@@ -1902,14 +2561,22 @@ function update3DModelViewer(solidData, ghostData = null, highlightData = null) 
         currentMesh.rotation.x = -Math.PI / 2; // Correct OpenSCAD coordinate system to Three.js space
         scene.add(currentMesh);
 
-        // Retain view camera positions smoothly
-        if (savedPosition && savedTarget) {
+        // Retain view camera positions smoothly — unless a model was just
+        // loaded/opened, in which case reset the camera to frame it.
+        if (pendingCameraReset) {
+            pendingCameraReset = false;
+            frameModelInCamera(currentMesh);
+        } else if (savedPosition && savedTarget) {
             camera.position.copy(savedPosition);
             controls.target.copy(savedTarget);
             controls.update();
+            syncSmoothZoomTargets();
         } else {
             frameModelInCamera(currentMesh);
         }
+
+        applyWireframeMode();          // 🕸 new meshes inherit the session mode
+        refreshViewerToolbar();        // 🎛️ button active-states track the scene
 
         if (typeof render === 'function') render();
         logToConsole("✨ 3D Render Canvas Updated Successfully.");
@@ -1952,14 +2619,26 @@ initOpenSCAD(); init3DWorkspace();
 window.switchWorkspace = switchWorkspace;   // temporary testing aid
 btnWireframe.style.background = '#007acc'; 
 
+// 🕸📐 Apply persisted view-mode settings. Written by setWireframeMode /
+// setProjectionMode, swept into backups like every other openscad_* key.
+// Must run AFTER init3DWorkspace() (projection needs the cameras built) and
+// after the default btnWireframe styling above. Both are no-ops when the
+// stored value matches the defaults (solid / perspective / key absent).
+if (localStorage.getItem('openscad_wireframe_mode') === 'enabled') setWireframeMode(true);
+if (localStorage.getItem('openscad_projection') === 'orthographic') setProjectionMode(true);
+
 // ==========================================================================
 // ⚙️ SETTINGS & MANAGER MODALS
 // ==========================================================================
 const btnSettings = document.getElementById('btn-settings');
 const btnCloseSettings = document.getElementById('btn-close-settings');
 //const settingsOverlay = document.getElementById('settings-overlay');    // already declared with other Dom elements at top of source
-const btnToggleGrid = document.getElementById('btn-toggle-grid');
-const btnToggleAxes = document.getElementById('btn-toggle-axes');
+// Grid/axes numeric inputs (replace the old Visible/Hidden toggle buttons)
+const gridStepInput = document.getElementById('grid-step-input');
+const gridRangeInput = document.getElementById('grid-range-input');
+const axesStepInput = document.getElementById('axes-step-input');
+const axesRangeInput = document.getElementById('axes-range-input');
+const axesHashInput = document.getElementById('axes-hash-input');
 
 // FONT DOM
 const btnOpenFontsMenu = document.getElementById('btn-open-fonts-menu');
@@ -1978,6 +2657,33 @@ const btnOpenSvgsMenu = document.getElementById('btn-open-svgs-menu');
 const svgsOverlay = document.getElementById('svgs-overlay');
 const btnCloseSvgs = document.getElementById('btn-close-svgs');
 const svgUploadInput = document.getElementById('svg-upload');
+
+// 📚 LIBRARIES DOM
+const btnOpenLibsMenu = document.getElementById('btn-open-libs-menu');
+const libsOverlay = document.getElementById('libs-overlay');
+const btnCloseLibs = document.getElementById('btn-close-libs');
+const libUploadInput = document.getElementById('lib-upload');
+
+// 📄 MY FILES (APP FS) DOM
+const btnOpenAppFs = document.getElementById('btn-open');
+const btnSaveAppFs = document.getElementById('btn-save-appfs');
+const openFilesOverlay = document.getElementById('openfiles-overlay');
+const btnCloseOpenFiles = document.getElementById('btn-close-openfiles');
+const userFileNameInput = document.getElementById('userfile-name-input');
+const btnUserFileSave = document.getElementById('btn-userfile-save');
+const btnDownloadAllZip = document.getElementById('btn-download-all-zip');
+
+// ✅ CONFIRM OVERLAY DOM (reusable)
+const confirmOverlay = document.getElementById('confirm-overlay');
+const confirmTitleEl = document.getElementById('confirm-title');
+const confirmMessageEl = document.getElementById('confirm-message');
+const btnConfirmYes = document.getElementById('btn-confirm-yes');
+const btnConfirmNo = document.getElementById('btn-confirm-no');
+
+// 💾 BACKUP / RESTORE DOM
+const btnBackupAll = document.getElementById('btn-backup-all');
+const btnRestoreAll = document.getElementById('btn-restore-all');
+const backupRestoreUpload = document.getElementById('backup-restore-upload');
 
 // 📜 LICENSES DOM (ADDED)
 const btnOpenLicensesMenu = document.getElementById('btn-open-licenses-menu');
@@ -2540,6 +3246,8 @@ function closeAllMenus() {
     if (stlsOverlay) stlsOverlay.classList.add('hidden');
     if (svgsOverlay) svgsOverlay.classList.add('hidden');
     if (licensesOverlay) licensesOverlay.classList.add('hidden');
+    if (typeof libsOverlay !== 'undefined' && libsOverlay) libsOverlay.classList.add('hidden');
+    if (typeof openFilesOverlay !== 'undefined' && openFilesOverlay) openFilesOverlay.classList.add('hidden');
 	if (typeof helpOverlay !== 'undefined' && helpOverlay) helpOverlay.classList.add('hidden');
 }
 
@@ -2553,7 +3261,13 @@ window.addEventListener('click', (event) => {
 // Update your Escape key listener
 window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
-        const isAnyOpen = [settingsOverlay, fontsOverlay, stlsOverlay, svgsOverlay, licensesOverlay, helpOverlay].some(el => el && !el.classList.contains('hidden'));
+        // Confirm dialog first: Esc = Cancel (via the No button, so the
+        // showConfirm promise resolves and its listeners clean up).
+        if (confirmOverlay && !confirmOverlay.classList.contains('hidden')) {
+            if (btnConfirmNo) btnConfirmNo.click();
+            return;
+        }
+        const isAnyOpen = [settingsOverlay, fontsOverlay, stlsOverlay, svgsOverlay, licensesOverlay, helpOverlay, libsOverlay, openFilesOverlay].some(el => el && !el.classList.contains('hidden'));
         if (isAnyOpen) { logToConsole('⌨️ Hotkey Triggered: [Escape] - Closing Overlays'); closeAllMenus(); }
     }
 });
@@ -2668,11 +3382,11 @@ async function renderCustomFontManagerList() {
 
         const rowWrap = document.createElement('div'); rowWrap.style.display = 'flex'; rowWrap.style.flexDirection = 'column'; rowWrap.style.padding = '8px 10px'; rowWrap.style.borderBottom = '1px solid #222'; rowWrap.style.gap = '6px';
         const topRow = document.createElement('div'); topRow.style.display = 'flex'; topRow.style.justifyContent = 'space-between'; topRow.style.alignItems = 'center';
-        const nameLabel = document.createElement('span'); nameLabel.textContent = font.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '210px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
+        const nameLabel = document.createElement('span'); nameLabel.textContent = font.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '360px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
         
         const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.style.background = '#dc3545'; delBtn.style.color = '#fff'; delBtn.style.padding = '2px 7px'; delBtn.style.fontSize = '0.75rem'; delBtn.style.borderRadius = '3px'; delBtn.style.cursor = 'pointer'; delBtn.style.fontWeight = 'bold';
         delBtn.addEventListener('click', async () => {
-            //if (confirm(`Uninstall "${font.filename}"?`)) {   // remove confirmation
+            if (!(await showConfirm('Uninstall font?', `Remove "${font.filename}" from your installed fonts?`, 'Uninstall'))) return;
                 await deletePersistentFont(font.filename); delete fontCache[font.filename]; 
                 logToConsole(`🗑️ Font uninstalled: ${font.filename}`); renderCustomFontManagerList();
                 if (openSCADFactory && !btnPreview.disabled) btnPreview.click(); 
@@ -2684,6 +3398,177 @@ async function renderCustomFontManagerList() {
         rowWrap.appendChild(topRow); rowWrap.appendChild(syntaxBox); listContainer.appendChild(rowWrap);
     });
 }
+// ============================================================================
+// ✅ REUSABLE CONFIRM OVERLAY — polished replacement for window.confirm().
+// Falls back to the native dialog if the overlay markup isn't present, so the
+// app degrades gracefully if index.html hasn't been updated yet.
+// ============================================================================
+function showConfirm(title, message, confirmLabel = 'Confirm') {
+    if (!confirmOverlay || !btnConfirmYes || !btnConfirmNo) {
+        return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+    }
+    return new Promise((resolve) => {
+        if (confirmTitleEl) confirmTitleEl.textContent = title;
+        if (confirmMessageEl) confirmMessageEl.textContent = message;
+        btnConfirmYes.textContent = confirmLabel;
+        confirmOverlay.classList.remove('hidden');
+        const cleanup = (result) => {
+            confirmOverlay.classList.add('hidden');
+            btnConfirmYes.removeEventListener('click', onYes);
+            btnConfirmNo.removeEventListener('click', onNo);
+            resolve(result);
+        };
+        const onYes = () => cleanup(true);
+        const onNo = () => cleanup(false);
+        btnConfirmYes.addEventListener('click', onYes);
+        btnConfirmNo.addEventListener('click', onNo);
+    });
+}
+
+// ============================================================================
+// 📄 MY FILES — Save / Save As / Open against the app filesystem (IndexedDB).
+// Document identity rides the project-name field: Save writes the buffer to
+// "<project name>.scad"; Open adopts the opened file's name as project name.
+// ============================================================================
+async function saveCurrentToAppFS() {
+    const rawName = (projectNameInput ? projectNameInput.value : activeProjectName).trim();
+    if (!rawName || rawName.toLowerCase() === 'untitled') {
+        // No document identity yet — route to Save As (overlay with name focus)
+        openUserFilesOverlay(true);
+        return;
+    }
+    await saveBufferAs(rawName);
+}
+
+async function saveBufferAs(rawName) {
+    const name = normalizeUserFileName(rawName);
+    if (!name) {
+        logToConsole('❌ Invalid file name (reserved or empty after sanitizing).');
+        return false;
+    }
+    if (userFileCache[name] !== undefined && name !== lastSavedName) {
+        const ok = await showConfirm('Overwrite file?', `"${name}" already exists in your app files. Replace it?`, 'Overwrite');
+        if (!ok) return false;
+    }
+    const content = jar.toString();
+    userFileCache[name] = content;
+    await savePersistentUserFile(name, content);
+    lastSavedName = name;
+    editorDirty = false;
+	updateSaveButtonState(); // turn the save button gray
+    // Adopt the (possibly sanitized) name as the document identity
+    activeProjectName = name.replace(/\.scad$/i, '');
+    localStorage.setItem(projectNameKey(getActiveWorkspace()), activeProjectName);
+    if (projectNameInput) projectNameInput.value = activeProjectName;
+    updateWindowTitle();
+    logToConsole(`💾 Saved ${name} to app files.`);
+    renderUserFilesManagerList();
+    return true;
+}
+
+function openUserFilesOverlay(saveAsMode) {
+    if (!openFilesOverlay) return;
+    openFilesOverlay.classList.remove('hidden');
+    renderUserFilesManagerList();
+    if (userFileNameInput) {
+        userFileNameInput.value = (projectNameInput ? projectNameInput.value : activeProjectName).trim().replace(/^untitled$/i, '');
+        if (saveAsMode) { userFileNameInput.focus(); userFileNameInput.select(); }
+    }
+}
+
+if (btnOpenAppFs) {
+    btnOpenAppFs.addEventListener('click', () => openUserFilesOverlay(false));
+}
+if (btnSaveAppFs) {
+    btnSaveAppFs.addEventListener('click', () => saveCurrentToAppFS());
+}
+if (btnCloseOpenFiles) {
+    btnCloseOpenFiles.addEventListener('click', () => openFilesOverlay.classList.add('hidden'));
+}
+if (btnUserFileSave) {
+    btnUserFileSave.addEventListener('click', async () => {
+        const ok = await saveBufferAs(userFileNameInput ? userFileNameInput.value : '');
+        if (ok && openFilesOverlay) openFilesOverlay.classList.add('hidden');
+    });
+}
+if (userFileNameInput) {
+    userFileNameInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && btnUserFileSave) btnUserFileSave.click();
+    });
+}
+if (btnDownloadAllZip) {
+    btnDownloadAllZip.addEventListener('click', () => {
+        const names = Object.keys(userFileCache);
+        if (names.length === 0) { logToConsole('ℹ️ No app files to download.'); return; }
+        const zipBytes = zipUserFiles(userFileCache, fflate);
+        const blob = new Blob([zipBytes], { type: 'application/zip' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'scadlite_files.zip';
+        link.click();
+        logToConsole(`⬇️ Downloaded ${names.length} file(s) as scadlite_files.zip.`);
+    });
+}
+
+async function renderUserFilesManagerList() {
+    const listContainer = document.getElementById('custom-userfiles-manager-list');
+    if (!listContainer) return;
+    const files = await getPersistentUserFiles();
+    if (files.length === 0) { listContainer.innerHTML = `<div style="font-size: 0.8rem; color: #555; text-align: center; padding: 12px; font-style: italic;">No saved files</div>`; return; }
+    files.sort((a, b) => b.modified - a.modified);
+    listContainer.innerHTML = '';
+    files.forEach(f => {
+        const row = document.createElement('div'); row.style.display = 'flex'; row.style.justifyContent = 'space-between'; row.style.alignItems = 'center'; row.style.padding = '7px 10px'; row.style.borderBottom = '1px solid #222'; row.style.gap = '8px';
+
+        const nameLabel = document.createElement('span');
+        nameLabel.textContent = f.name + (f.name === lastSavedName ? '  ●' : '');
+        nameLabel.title = new Date(f.modified).toLocaleString();
+        nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.flex = '1'; nameLabel.style.color = '#ddd';
+
+        const openBtn = document.createElement('button'); openBtn.textContent = 'Open'; openBtn.style.background = '#007acc'; openBtn.style.color = '#fff'; openBtn.style.padding = '2px 9px'; openBtn.style.fontSize = '0.75rem'; openBtn.style.borderRadius = '3px'; openBtn.style.cursor = 'pointer'; openBtn.style.fontWeight = 'bold';
+        openBtn.addEventListener('click', async () => {
+            if (editorDirty) {
+                const ok = await showConfirm('Open file?', `Opening "${f.name}" replaces the editor contents. Unsaved buffer changes will be lost.`, 'Open');
+                if (!ok) return;
+            }
+            jar.updateCode(f.content);
+            editorDirty = false; // updateCode fires onChange; clear after
+			updateSaveButtonState(); // turn save button gray
+            lastSavedName = f.name;
+            activeProjectName = f.name.replace(/\.scad$/i, '');
+            localStorage.setItem(projectNameKey(getActiveWorkspace()), activeProjectName);
+            if (projectNameInput) projectNameInput.value = activeProjectName;
+            updateWindowTitle();
+            openFilesOverlay.classList.add('hidden');
+            logToConsole(`📂 Opened ${f.name} from app files.`);
+            pendingCameraReset = true; // frame the camera to the newly opened model
+            if (openSCADFactory && !btnPreview.disabled) btnPreview.click();
+        });
+
+        const dlBtn = document.createElement('button'); dlBtn.textContent = '⬇'; dlBtn.title = 'Download to your system'; dlBtn.style.background = '#444'; dlBtn.style.color = '#fff'; dlBtn.style.padding = '2px 8px'; dlBtn.style.fontSize = '0.75rem'; dlBtn.style.borderRadius = '3px'; dlBtn.style.cursor = 'pointer';
+        dlBtn.addEventListener('click', () => {
+            const blob = new Blob([f.content], { type: 'text/plain' });
+            const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
+            link.download = f.name; link.click();
+        });
+
+        const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.style.background = '#dc3545'; delBtn.style.color = '#fff'; delBtn.style.padding = '2px 7px'; delBtn.style.fontSize = '0.75rem'; delBtn.style.borderRadius = '3px'; delBtn.style.cursor = 'pointer'; delBtn.style.fontWeight = 'bold';
+        delBtn.addEventListener('click', async () => {
+            const ok = await showConfirm('Delete file?', `Permanently delete "${f.name}" from your app files?`, 'Delete');
+            if (!ok) return;
+            await deletePersistentUserFile(f.name); delete userFileCache[f.name];
+            if (lastSavedName === f.name) lastSavedName = null;
+            if (sessionLastSaved.main === f.name) sessionLastSaved.main = null;
+            if (sessionLastSaved.link === f.name) sessionLastSaved.link = null;
+            logToConsole(`🗑️ File deleted: ${f.name}`);
+            renderUserFilesManagerList();
+        });
+
+        row.appendChild(nameLabel); row.appendChild(openBtn); row.appendChild(dlBtn); row.appendChild(delBtn);
+        listContainer.appendChild(row);
+    });
+}
+
 
 // 📁 STL RENDERER
 async function renderCustomStlManagerList() {
@@ -2696,11 +3581,11 @@ async function renderCustomStlManagerList() {
         const rowWrap = document.createElement('div'); rowWrap.style.display = 'flex'; rowWrap.style.flexDirection = 'column'; rowWrap.style.padding = '8px 10px'; rowWrap.style.borderBottom = '1px solid #222'; rowWrap.style.gap = '6px';
         const topRow = document.createElement('div'); topRow.style.display = 'flex'; topRow.style.justifyContent = 'space-between'; topRow.style.alignItems = 'center';
         
-        const nameLabel = document.createElement('span'); nameLabel.textContent = stl.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '210px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
+        const nameLabel = document.createElement('span'); nameLabel.textContent = stl.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '360px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
         
         const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.style.background = '#dc3545'; delBtn.style.color = '#fff'; delBtn.style.padding = '2px 7px'; delBtn.style.fontSize = '0.75rem'; delBtn.style.borderRadius = '3px'; delBtn.style.cursor = 'pointer'; delBtn.style.fontWeight = 'bold';
         delBtn.addEventListener('click', async () => {
-            //if (confirm(`Remove STL "${stl.filename}"?`)) {   remove confirmation
+            if (!(await showConfirm('Remove STL?', `Remove "${stl.filename}" from your STL imports?`, 'Remove'))) return;
                 await deletePersistentStl(stl.filename); delete stlCache[stl.filename]; 
                 logToConsole(`🗑️ STL removed: ${stl.filename}`); renderCustomStlManagerList();
                 if (openSCADFactory && !btnPreview.disabled) btnPreview.click(); 
@@ -2724,11 +3609,11 @@ async function renderCustomSvgManagerList() {
         const rowWrap = document.createElement('div'); rowWrap.style.display = 'flex'; rowWrap.style.flexDirection = 'column'; rowWrap.style.padding = '8px 10px'; rowWrap.style.borderBottom = '1px solid #222'; rowWrap.style.gap = '6px';
         const topRow = document.createElement('div'); topRow.style.display = 'flex'; topRow.style.justifyContent = 'space-between'; topRow.style.alignItems = 'center';
         
-        const nameLabel = document.createElement('span'); nameLabel.textContent = svg.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '210px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
+        const nameLabel = document.createElement('span'); nameLabel.textContent = svg.filename; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '360px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
         
         const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.style.background = '#dc3545'; delBtn.style.color = '#fff'; delBtn.style.padding = '2px 7px'; delBtn.style.fontSize = '0.75rem'; delBtn.style.borderRadius = '3px'; delBtn.style.cursor = 'pointer'; delBtn.style.fontWeight = 'bold';
         delBtn.addEventListener('click', async () => {
-            //if (confirm(`Remove SVG "${svg.filename}"?`)) {   // remove confirmation
+            if (!(await showConfirm('Remove SVG?', `Remove "${svg.filename}" from your SVG imports?`, 'Remove'))) return;
                 await deletePersistentSvg(svg.filename); delete svgCache[svg.filename]; 
                 logToConsole(`🗑️ SVG removed: ${svg.filename}`); renderCustomSvgManagerList();
                 if (openSCADFactory && !btnPreview.disabled) btnPreview.click(); 
@@ -2826,20 +3711,332 @@ if (svgUploadInput) {
     });
 }
 
-const applyGridLayout = (visible) => {
-    isGridVisible = visible; localStorage.setItem('openscad_grid_visible', visible);
-    if (gridHelper) gridHelper.visible = visible;
-    if (btnToggleGrid) { btnToggleGrid.innerText = visible ? 'Visible' : 'Hidden'; btnToggleGrid.style.backgroundColor = visible ? '#28a745' : '#dc3545'; }
-};
-const applyAxesLayout = (visible) => {
-    isAxesVisible = visible; localStorage.setItem('openscad_axes_visible', visible);
-    if (axesGroup) axesGroup.visible = visible;
-    if (btnToggleAxes) { btnToggleAxes.innerText = visible ? 'Visible' : 'Hidden'; btnToggleAxes.style.backgroundColor = visible ? '#28a745' : '#dc3545'; }
-};
+// 📚 LIBRARY MANAGER — mirrors the STL/SVG manager pattern
+if (btnOpenLibsMenu) {
+    btnOpenLibsMenu.addEventListener('click', () => {
+        if (settingsOverlay) settingsOverlay.classList.add('hidden');
+        if (libsOverlay) { libsOverlay.classList.remove('hidden'); renderCustomLibsManagerList(); }
+    });
+}
+if (btnCloseLibs) {
+    btnCloseLibs.addEventListener('click', () => {
+        if (libsOverlay) libsOverlay.classList.add('hidden');
+        if (settingsOverlay) settingsOverlay.classList.remove('hidden');
+    });
+}
+if (libUploadInput) {
+    libUploadInput.addEventListener('change', (event) => {
+        const file = event.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const zipBytes = new Uint8Array(e.target.result);
+                const ingest = ingestLibraryZip(zipBytes, file.name, fflate);
+                // Folder name = zip filename (minus .zip). The user names the
+                // zip to match their include paths: MCAD.zip -> include <MCAD/...>.
+                const name = ingest.suggestedName;
+                const record = { files: ingest.files, fileCount: ingest.fileCount, scadCount: ingest.scadCount, totalBytes: ingest.totalBytes, added: Date.now() };
+                libCache[name] = record;
+                await savePersistentLib(name, record);
+                logToConsole(`📚 Library "${name}" installed: ${ingest.scadCount} .scad file(s), ${formatLibBytes(ingest.totalBytes)}.`);
+                renderCustomLibsManagerList();
+                if (openSCADFactory && !btnPreview.disabled) btnPreview.click();
+            } catch (err) {
+                logToConsole(`❌ Library install failed: ${err.message}`);
+            }
+        };
+        reader.readAsArrayBuffer(file); event.target.value = '';
+    });
+}
 
-applyGridLayout(isGridVisible); applyAxesLayout(isAxesVisible);
-if (btnToggleGrid) btnToggleGrid.addEventListener('click', () => applyGridLayout(!isGridVisible));
-if (btnToggleAxes) btnToggleAxes.addEventListener('click', () => applyAxesLayout(!isAxesVisible));
+async function renderCustomLibsManagerList() {
+    const listContainer = document.getElementById('custom-libs-manager-list');
+    if (!listContainer) return;
+    const customLibs = await getPersistentLibs();
+    if (customLibs.length === 0) { listContainer.innerHTML = `<div style="font-size: 0.8rem; color: #555; text-align: center; padding: 12px; font-style: italic;">No libraries installed</div>`; return; }
+    listContainer.innerHTML = '';
+    customLibs.forEach(lib => {
+        const rowWrap = document.createElement('div'); rowWrap.style.display = 'flex'; rowWrap.style.flexDirection = 'column'; rowWrap.style.padding = '8px 10px'; rowWrap.style.borderBottom = '1px solid #222'; rowWrap.style.gap = '6px';
+        const topRow = document.createElement('div'); topRow.style.display = 'flex'; topRow.style.justifyContent = 'space-between'; topRow.style.alignItems = 'center';
+
+        const nameLabel = document.createElement('span'); nameLabel.textContent = `${lib.name}  (${lib.scadCount} .scad, ${formatLibBytes(lib.totalBytes)})`; nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.maxWidth = '360px'; nameLabel.style.color = '#ddd'; nameLabel.style.fontWeight = 'bold';
+
+        const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.style.background = '#dc3545'; delBtn.style.color = '#fff'; delBtn.style.padding = '2px 7px'; delBtn.style.fontSize = '0.75rem'; delBtn.style.borderRadius = '3px'; delBtn.style.cursor = 'pointer'; delBtn.style.fontWeight = 'bold';
+        delBtn.addEventListener('click', async () => {
+            if (!(await showConfirm('Remove library?', `Remove the "${lib.name}" library? Code using include <${lib.name}/...> will stop compiling.`, 'Remove'))) return;
+            await deletePersistentLib(lib.name); delete libCache[lib.name];
+            logToConsole(`🗑️ Library removed: ${lib.name}`); renderCustomLibsManagerList();
+            if (openSCADFactory && !btnPreview.disabled) btnPreview.click();
+        });
+        topRow.appendChild(nameLabel); topRow.appendChild(delBtn);
+
+        const firstScad = Object.keys(lib.files).filter(f => /\.scad$/i.test(f)).sort((a, b) => a.split('/').length - b.split('/').length)[0];
+        const syntaxBox = document.createElement('div'); syntaxBox.textContent = `include <${lib.name}/${firstScad}>`; syntaxBox.style.fontSize = '0.75rem'; syntaxBox.style.color = '#00c3ff'; syntaxBox.style.background = '#1a1a1a'; syntaxBox.style.padding = '5px 8px'; syntaxBox.style.borderRadius = '4px'; syntaxBox.style.fontFamily = 'monospace'; syntaxBox.style.cursor = 'text'; syntaxBox.style.userSelect = 'all'; syntaxBox.style.webkitUserSelect = 'all';
+        rowWrap.appendChild(topRow); rowWrap.appendChild(syntaxBox); listContainer.appendChild(rowWrap);
+    });
+}
+
+// ============================================================================
+// 💾 BACKUP & RESTORE — export/import ALL app data as a single zip.
+// Zip layout:
+//   settings.json            { format, build, created, settings: {openscad_*} }
+//   AppFiles/<name>.scad     user .scad files (My Files)
+//   Libraries/<lib>/<path>   installed libraries, nested paths preserved
+//   Fonts/<file>             uploaded TTF/OTF fonts
+//   STLs/<file>              uploaded STL imports
+//   SVGs/<file>              uploaded SVG imports
+// settings.json sweeps EVERY openscad_* localStorage key verbatim — including
+// the Main/Link workspace buffers and project name — so future settings ride
+// along with zero backup-code changes, and old backups restored into newer
+// builds simply leave missing keys at their defaults.
+// Restore is MIRROR semantics: validate the whole zip in memory FIRST, then
+// wipe all five stores + openscad_* keys, write the backup's contents, and
+// location.reload() so the app boots exactly like a fresh start.
+// ============================================================================
+const BACKUP_FORMAT = 1;
+
+// Local-time stamp for the download name: SCADLite_YYYY-MM-DD-HH-MM-SS.zip
+function backupTimestamp() {
+    const d = new Date(), p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+// Normalize stored blobs for fflate (IndexedDB values may round-trip as
+// ArrayBuffer; library .scad entries could conceivably be strings).
+function backupToU8(data) {
+    if (data instanceof Uint8Array) return data;
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (typeof data === 'string') return fflate.strToU8(data);
+    return new Uint8Array(0);
+}
+
+// Sweep every openscad_* localStorage key — the future-proofing core.
+function sweepBackupSettings() {
+    const settings = {};
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('openscad_')) settings[key] = localStorage.getItem(key);
+    }
+    return settings;
+}
+
+async function buildBackupZip() {
+    const settings = sweepBackupSettings();
+    // Capture the LIVE editor buffer into the active workspace's key: the
+    // demo model (and any content loaded before per-keystroke persistence
+    // arms) never hits localStorage, so sweeping alone can miss what's
+    // visibly in the editor. Only when non-blank, though — with Recover Last
+    // Workspaces disabled the editor starts blank while localStorage holds
+    // the safeguard copy, and a blank override would clobber it.
+    const liveBuffer = jar.toString();
+    if (liveBuffer.trim() !== '') settings[wsStorageKey(getActiveWorkspace())] = liveBuffer;
+    const tree = {};
+    tree['settings.json'] = fflate.strToU8(JSON.stringify({
+        format: BACKUP_FORMAT,
+        build: BUILD_NUMBER,
+        created: new Date().toISOString(),
+        settings
+    }, null, 2));
+    for (const f of await getPersistentUserFiles()) tree['AppFiles/' + f.name] = fflate.strToU8(f.content);
+    for (const f of await getPersistentFonts())     tree['Fonts/' + f.filename] = backupToU8(f.binary);
+    for (const f of await getPersistentStls())      tree['STLs/'  + f.filename] = backupToU8(f.binary);
+    for (const f of await getPersistentSvgs())      tree['SVGs/'  + f.filename] = backupToU8(f.binary);
+    for (const lib of await getPersistentLibs())
+        for (const [path, data] of Object.entries(lib.files))
+            tree[`Libraries/${lib.name}/${path}`] = backupToU8(data);
+    return fflate.zipSync(tree);
+}
+
+if (btnBackupAll) {
+    btnBackupAll.addEventListener('click', async () => {
+        try {
+            logToConsole('💾 Building backup zip (large libraries/STLs are zipped in memory — this may take a moment)…');
+            const zipBytes = await buildBackupZip();
+            const filename = `SCADLite_${backupTimestamp()}.zip`;
+            const blob = new Blob([zipBytes], { type: 'application/zip' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+            logToConsole(`✅ Backup downloaded: ${filename} (${formatLibBytes(zipBytes.length)}).`);
+        } catch (err) {
+            logToConsole(`❌ Backup failed: ${err.message}`);
+        }
+    });
+}
+
+// Parse + validate a backup zip ENTIRELY in memory. Throws on anything
+// unusable — nothing is deleted until this returns successfully.
+function parseBackupZip(zipBytes) {
+    let entries;
+    try { entries = fflate.unzipSync(zipBytes); }
+    catch { throw new Error('File is not a readable zip archive.'); }
+    if (!entries['settings.json']) throw new Error('Not a SCADLite backup (settings.json missing at zip root).');
+    let manifest;
+    try { manifest = JSON.parse(fflate.strFromU8(entries['settings.json'])); }
+    catch { throw new Error('settings.json is not valid JSON.'); }
+    if (manifest.format !== BACKUP_FORMAT) throw new Error(`Unsupported backup format "${manifest.format}" (this build reads format ${BACKUP_FORMAT}).`);
+    if (typeof manifest.settings !== 'object' || manifest.settings === null) throw new Error('settings.json has no settings object.');
+
+    const data = { manifest, appFiles: {}, fonts: {}, stls: {}, svgs: {}, libs: {} };
+    for (const [path, bytes] of Object.entries(entries)) {
+        if (path.endsWith('/')) continue;                 // folder placeholder entries
+        const slash = path.indexOf('/');
+        if (slash === -1) continue;                       // root files besides settings.json: ignore
+        const top = path.slice(0, slash), rest = path.slice(slash + 1);
+        if (!rest) continue;
+        if      (top === 'AppFiles') {
+            if (rest.includes('/')) continue;             // user-files store is flat
+            data.appFiles[rest] = fflate.strFromU8(bytes);
+        }
+        else if (top === 'Fonts')    data.fonts[rest] = bytes;
+        else if (top === 'STLs')     data.stls[rest] = bytes;
+        else if (top === 'SVGs')     data.svgs[rest] = bytes;
+        else if (top === 'Libraries') {
+            const slash2 = rest.indexOf('/');
+            if (slash2 === -1) continue;                  // stray file directly under Libraries/
+            const libName = rest.slice(0, slash2), inner = rest.slice(slash2 + 1);
+            if (!libName || !inner) continue;
+            if (!data.libs[libName]) data.libs[libName] = {};
+            data.libs[libName][inner] = bytes;            // nested paths preserved verbatim
+        }
+        // Unknown top-level folders: ignored (forward compatibility).
+    }
+    return data;
+}
+
+// MIRROR WIPE: empty all five stores and remove every openscad_* key, so the
+// app ends up matching the backup exactly — no mystery leftovers.
+async function wipeAllPersistentData() {
+    const clearStore = (openFn, storeName) => openFn().then(db => new Promise((resolve, reject) => {
+        const req = db.transaction(storeName, 'readwrite').objectStore(storeName).clear();
+        req.onsuccess = resolve; req.onerror = () => reject(req.error);
+    }));
+    await clearStore(openFontsDB, 'fonts');
+    await clearStore(openStlsDB, 'stls');
+    await clearStore(openSvgsDB, 'svgs');
+    // Module-owned stores clear through their own exported helpers (a single
+    // store.clear() each — no loading multi-MB libraries just to delete them).
+    await clearPersistentLibs();
+    await clearPersistentUserFiles();
+    for (const key of Object.keys(sweepBackupSettings())) localStorage.removeItem(key);
+}
+
+async function writeRestoredData(data) {
+    for (const [key, value] of Object.entries(data.manifest.settings))
+        if (key.startsWith('openscad_') && typeof value === 'string') localStorage.setItem(key, value);
+    for (const [name, content] of Object.entries(data.appFiles)) {
+        // Never let a (hand-edited) backup shadow the pipeline's own inputs.
+        if (RESERVED_SCAD_NAMES.has(name.toLowerCase())) continue;
+        await savePersistentUserFile(name, content);
+    }
+    for (const [name, bytes] of Object.entries(data.fonts)) await savePersistentFont(name, bytes);
+    for (const [name, bytes] of Object.entries(data.stls))  await savePersistentStl(name, bytes);
+    for (const [name, bytes] of Object.entries(data.svgs))  await savePersistentSvg(name, bytes);
+    for (const [name, files] of Object.entries(data.libs)) {
+        const paths = Object.keys(files);
+        await savePersistentLib(name, {
+            files,
+            fileCount: paths.length,
+            scadCount: paths.filter(p => /\.scad$/i.test(p)).length,
+            totalBytes: paths.reduce((sum, p) => sum + files[p].length, 0),
+            added: Date.now()
+        });
+    }
+    // COMMIT BARRIER: the save helpers fire-and-forget their readwrite
+    // transactions; a readonly transaction on the same store queues behind
+    // them, so awaiting these reads guarantees every write committed BEFORE
+    // we reload (otherwise the reload could abort in-flight transactions).
+    await getPersistentFonts(); await getPersistentStls(); await getPersistentSvgs();
+    await getPersistentLibs();  await getPersistentUserFiles();
+}
+
+if (btnRestoreAll) {
+    btnRestoreAll.addEventListener('click', () => {
+        if (backupRestoreUpload) backupRestoreUpload.click();
+    });
+}
+if (backupRestoreUpload) {
+    backupRestoreUpload.addEventListener('change', (event) => {
+        const file = event.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            // 1) VALIDATE FIRST — a corrupt/wrong zip aborts with everything intact.
+            let data;
+            try { data = parseBackupZip(new Uint8Array(e.target.result)); }
+            catch (err) { logToConsole(`❌ Restore aborted — ${err.message} Nothing was changed.`); return; }
+
+            const n = (o) => Object.keys(o).length;
+            const created = data.manifest.created ? ` from ${new Date(data.manifest.created).toLocaleString()}` : '';
+            const summary = `${n(data.appFiles)} app file(s), ${n(data.libs)} librar${n(data.libs) === 1 ? 'y' : 'ies'}, ${n(data.fonts)} font(s), ${n(data.stls)} STL(s), ${n(data.svgs)} SVG(s)`;
+            const ok = await showConfirm(
+                'Erase everything and restore?',
+                `Restoring data erases all current data, including: app files, libraries, fonts, STLs, SVGs, all settings, and the editor workspaces. It replaces everything with this backup${created} (${summary}). Anything not in the backup will be lost. The app reloads when finished.`,
+                'Erase & Restore'
+            );
+            if (!ok) { logToConsole('ℹ️ Restore cancelled. Nothing was changed.'); return; }
+
+            // 2) WIPE + WRITE — only after the replacement data is confirmed readable.
+            try {
+                logToConsole('♻️ Restoring backup — do not close this tab…');
+                await wipeAllPersistentData();
+                await writeRestoredData(data);
+                sessionStorage.setItem('openscad_restore_notice', '1');
+                location.reload();
+            } catch (err) {
+                logToConsole(`❌ Restore failed mid-write: ${err.message}. Local data may be incomplete — restoring the same backup again is safe to retry.`);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+        event.target.value = '';
+    });
+}
+
+// Post-reload notice: sessionStorage survives location.reload(), so the fresh
+// boot can confirm the restore in the console.
+if (sessionStorage.getItem('openscad_restore_notice')) {
+    sessionStorage.removeItem('openscad_restore_notice');
+    logToConsole('✅ Backup restored — all data and settings were loaded from your backup zip.');
+}
+
+// Wire a numeric view-setting input: shows the stored value, and on commit
+// (Enter/blur) validates, persists, and rebuilds the affected scene object.
+// Invalid input (non-numeric) reverts to the current value; negatives clamp
+// to 0 (which carries the documented "disabled" semantics).
+function wireViewSettingInput(inputEl, storageKey, getVal, setVal, rebuild, min = 0, max = Infinity) {
+    if (!inputEl) return;
+    inputEl.value = getVal();
+    inputEl.addEventListener('change', () => {
+        let v = parseFloat(inputEl.value);
+        if (!Number.isFinite(v)) { inputEl.value = getVal(); return; } // revert
+        v = Math.min(Math.max(v, min), max);   // clamp into the valid range
+        setVal(v);
+        localStorage.setItem(storageKey, String(v));
+        inputEl.value = v;
+        if (rebuild) rebuild();
+    });
+}
+wireViewSettingInput(gridStepInput,  'openscad_grid_step',  () => gridStep,  v => gridStep = v,  rebuildGrid);
+wireViewSettingInput(gridRangeInput, 'openscad_grid_range', () => gridRange, v => gridRange = v, rebuildGrid);
+wireViewSettingInput(axesStepInput,  'openscad_axes_step',  () => axesStep,  v => axesStep = v,  rebuildAxes);
+wireViewSettingInput(axesRangeInput, 'openscad_axes_range', () => axesRange, v => axesRange = v, rebuildAxes);
+wireViewSettingInput(axesHashInput,  'openscad_axes_hash',  () => axesHash,  v => axesHash = v,  rebuildAxes);
+
+// Zoom Settings — no rebuild needed; the wheel handler and animate loop read
+// these live. Bounds keep them usable: intensity 0 would deaden the wheel,
+// smoothness 0 would freeze the camera mid-glide.
+const zoomIntensityInput = document.getElementById('zoom-intensity-input');
+const zoomSmoothnessInput = document.getElementById('zoom-smoothness-input');
+wireViewSettingInput(zoomIntensityInput,  'openscad_zoom_intensity',  () => zoomIntensity,  v => zoomIntensity = v,  null, 0.0001, 0.05);
+wireViewSettingInput(zoomSmoothnessInput, 'openscad_zoom_smoothness', () => zoomSmoothness, v => zoomSmoothness = v, null, 0.01, 1);
+
+// Grid / Axes On-Off buttons in Workspace Settings — share the same setters
+// (and thus the same persisted flags) as the viewer-corner toolbar buttons.
+const btnToggleGrid = document.getElementById('btn-toggle-grid');
+const btnToggleAxes = document.getElementById('btn-toggle-axes');
+if (btnToggleGrid) btnToggleGrid.addEventListener('click', () => setGridVisible(!gridVisible));
+if (btnToggleAxes) btnToggleAxes.addEventListener('click', () => setAxesVisible(!axesVisible));
+syncGridAxesButtons(); // reflect restored state on load
 
 const leftPaneContainer = document.getElementById('left-pane-container');
 const panelSplitGutter = document.getElementById('panel-split-gutter');
@@ -2855,7 +4052,7 @@ if (leftPaneContainer && panelSplitGutter) {
                 const container3d = document.getElementById('viewer-3d');
                 if (container3d) {
                     const cw = container3d.clientWidth, ch = container3d.clientHeight;
-                    if (cw > 0 && ch > 0) { camera.aspect = cw / ch; camera.updateProjectionMatrix(); renderer.setSize(cw, ch, true); }
+                    if (cw > 0 && ch > 0) updateCameraViewport(cw, ch);
                 }
             }
         }

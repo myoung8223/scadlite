@@ -1,4 +1,4 @@
-const CACHE_NAME = 'scadlite-v305';
+const CACHE_NAME = 'scadlite-v328';
 
 const ASSETS_TO_CACHE = [
   // Base HTML and Manifest
@@ -12,6 +12,14 @@ const ASSETS_TO_CACHE = [
   './icon-192.png',
   './icon-512.png',
 
+  // custom buttons
+  './images/axes_btn.png',
+  './images/ellipsis_btn.png',
+  './images/grid_btn.png',
+  './images/ortho_btn.png',
+  './images/reset_btn.png',
+  './images/wireframe_btn.png',
+
   // local libraries
   './libs/three.min.js',
   './libs/3MFLoader.js',
@@ -21,6 +29,8 @@ const ASSETS_TO_CACHE = [
   './libs/openscad.js',
   './libs/openscad.wasm',
   './preview-transforms.js',
+  './library-manager.js',
+  './user-files.js',
   './libs/scadlite-cm6.bundle.js',
   
   // Your local typography suite
