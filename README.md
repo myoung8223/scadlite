@@ -48,7 +48,7 @@ It can also be accessed/installed via GitHub Pages at **<a href="https://myoung8
 - [x] **Code Folding:** Collapse `{ ... }` brace blocks via the editor's fold gutter, plus custom `// REGION` / `// ENDREGION` comment-based folding for hiding sections.
 - [x] **Link Sharing & Link Workspace:** Encode the current model into a shareable URL, with a dedicated secondary Link Workspace that keeps shared/received models separate from primary work.
 - [x] **Improve 3D Lighting and Model Texturing:** Right now the lighting needs improvement and texturing the models would improve the preview.
-- [ ] **Camera Movement Improvements:** Improve the camera movement, perhaps with translation acceleration. (Zoom intensity and smoothness are now tunable in Workspace Settings.)
+- [x] **Camera Movement Improvements:** Improve the camera zoom movement. Zoom intensity and smoothness are now tunable in Workspace Settings.
 - [x] **Orthogonal Projection:** Toggle between perspective and orthogonal 3D projection, from the viewer toolbar or Workspace Settings, with the choice persisted across sessions.
 - [x] **Add Support for Color:** Render script-defined `color()`, custom RGB, and alpha transparency natively via the 3MF pipeline.
 - [x] **Improve Error Highlighting:** While there's basic error highlighting now, that should be refined further.
