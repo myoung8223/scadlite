@@ -1,5 +1,5 @@
 // ---- BUILD VERSION CONTROLLER ----
-const BUILD_NUMBER = "328";
+const BUILD_NUMBER = "333";
 
 import OpenSCAD from './libs/openscad.js';
 import { isolateHighlights, isolateOpenSCADGhosts, splitTopLevelStatements,
@@ -22,6 +22,7 @@ const viewer3d = document.getElementById('viewer-3d');
 const btnCameraReset = document.getElementById('btn-camera-reset');
 const placeholderText = document.getElementById('placeholder-text');
 const btnWireframe = document.getElementById('btn-wireframe');
+const btnProjection = document.getElementById('btn-projection');
 const projectNameInput = document.getElementById('project-name-input');
 const editorFontSizeSelect = document.getElementById('editor-font-size-select');
 const modelColorInput = document.getElementById('model-color');
@@ -586,6 +587,7 @@ function updateWorkspaceButtons() {
         btnToggleLinkSharing.textContent = linkSharingEnabled ? 'Enabled' : 'Disabled';
         btnToggleLinkSharing.style.backgroundColor = linkSharingEnabled ? '#28a745' : '#dc3545';
     }
+    if (typeof updateViewerWorkspaceLabel === 'function') updateViewerWorkspaceLabel();
 }
 
 const axesStyleSelect = document.getElementById('axes-style-select');
@@ -691,6 +693,145 @@ if (btnUpdateLink) {
 			updateWorkspaceButtons();
         } catch (err) {
             logToConsole('🔗 Could not generate link: ' + (err.message || err));
+        }
+    });
+}
+
+// ============================================================================
+// 📂 LOAD OVERLAY — one overlay, two paths: disk upload or shared link.
+// Toolbar Load goes straight to the file picker while link sharing is
+// disabled (zero overhead for non-sharing users) and opens this overlay once
+// it's enabled. The Workspace Settings "Load Shared Link" button always opens
+// the overlay with the URL field focused (entry-point-aware) and its Back
+// button returns to settings. A successful load — either path — closes
+// everything. Link sharing is enabled only by an actually EXECUTED link load,
+// never by merely opening the overlay.
+// ============================================================================
+const loadOverlay = document.getElementById('load-overlay');
+const btnCloseLoad = document.getElementById('btn-close-load');
+const btnLoadMain = document.getElementById('btn-load-main');
+const btnLoadFromDisk = document.getElementById('btn-load-from-disk');
+const btnLoadSharedLink = document.getElementById('btn-load-shared-link');
+const sharedLinkInput = document.getElementById('shared-link-input');
+const btnPasteSharedLink = document.getElementById('btn-paste-shared-link');
+const btnLoadSharedLinkExec = document.getElementById('btn-load-shared-link-exec');
+
+let loadOverlayFromSettings = false;   // entry point, for Back's destination
+
+function openLoadOverlay(fromSettings) {
+    loadOverlayFromSettings = !!fromSettings;
+    if (settingsOverlay) settingsOverlay.classList.add('hidden');
+    if (sharedLinkInput) sharedLinkInput.value = '';
+    if (loadOverlay) loadOverlay.classList.remove('hidden');
+    if (fromSettings && sharedLinkInput) setTimeout(() => sharedLinkInput.focus(), 0);
+}
+
+function closeLoadOverlay(returnToSettings) {
+    if (loadOverlay) loadOverlay.classList.add('hidden');
+    if (returnToSettings && settingsOverlay) settingsOverlay.classList.remove('hidden');
+}
+
+// Ingest a pasted share link (or any text containing one). Returns true on
+// success. Mirrors the boot-time arrival path, adapted for a live session.
+function loadSharedLinkFromText(text) {
+    const hash = extractShareHash(text);
+    if (!hash) {
+        logToConsole('🔗 No share link found — paste a link containing "#scad=".');
+        return false;
+    }
+    const parts = parseShareHash(hash);
+    let decoded = null;
+    try { decoded = decodeModel(parts.scad || ''); } catch (e) { /* falls through */ }
+    if (!decoded || decoded.trim() === '') {
+        logToConsole('🔗 Could not decode that share link — it may be truncated or corrupted.');
+        return false;
+    }
+    const pn = sanitizeSharedProjectName(parts.pn);
+
+    // Enable link sharing only now — on an actually executed load.
+    if (!linkSharingEnabled) {
+        linkSharingEnabled = true;
+        localStorage.setItem('openscad_link_sharing', 'enabled');
+    }
+
+    // Land content + identity in the link workspace, then show it.
+    setWorkspaceCode('link', decoded);
+    localStorage.setItem(projectNameKey('link'), pn);
+    if (getActiveWorkspace() === 'link') {
+        // Already viewing link: switchWorkspace would no-op — update in place.
+        jar.updateCode(decoded);
+        activeProjectName = pn;
+        if (projectNameInput) projectNameInput.value = pn;
+        updateWindowTitle();
+    } else {
+        switchWorkspace('link');
+    }
+
+    // Reflect the link in the (invisible-in-a-PWA) address bar so the Update
+    // Link staleness check compares against reality and shows "Link Updated".
+    const canonical = window.location.origin + window.location.pathname
+        + '#scad=' + parts.scad + (parts.pn ? '&pn=' + parts.pn : '');
+    history.replaceState(null, '', canonical);
+
+    updateWorkspaceButtons();
+    logToConsole('🔗 Shared model loaded into Link Sharing workspace.');
+    if (btnPreview && !btnPreview.disabled) btnPreview.click();
+    return true;
+}
+
+// Toolbar Load: picker directly when sharing is off; the overlay when on.
+if (btnLoadMain) {
+    btnLoadMain.addEventListener('click', () => {
+        if (linkSharingActive()) openLoadOverlay(false);
+        else if (fileLoad) fileLoad.click();
+    });
+}
+
+// Settings entry point: always available — this is the bootstrap for
+// first-time link recipients (sharing may still be disabled here).
+if (btnLoadSharedLink) {
+    btnLoadSharedLink.addEventListener('click', () => openLoadOverlay(true));
+}
+
+if (btnCloseLoad) {
+    btnCloseLoad.addEventListener('click', () => closeLoadOverlay(loadOverlayFromSettings));
+}
+
+// Disk path: hand off to the existing picker; all overlays close.
+if (btnLoadFromDisk) {
+    btnLoadFromDisk.addEventListener('click', () => {
+        closeAllMenus();
+        if (fileLoad) fileLoad.click();
+    });
+}
+
+// Clipboard convenience — only exists where the platform supports reading.
+// The manual paste field is the universal path.
+if (btnPasteSharedLink) {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+        btnPasteSharedLink.addEventListener('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (sharedLinkInput) { sharedLinkInput.value = text; sharedLinkInput.focus(); }
+            } catch (e) {
+                logToConsole('📋 Clipboard read unavailable — paste into the field manually (Ctrl+V).');
+            }
+        });
+    } else {
+        btnPasteSharedLink.style.display = 'none';
+    }
+}
+
+if (btnLoadSharedLinkExec) {
+    btnLoadSharedLinkExec.addEventListener('click', () => {
+        if (loadSharedLinkFromText(sharedLinkInput ? sharedLinkInput.value : '')) closeAllMenus();
+    });
+}
+if (sharedLinkInput) {
+    sharedLinkInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            if (btnLoadSharedLinkExec) btnLoadSharedLinkExec.click();
         }
     });
 }
@@ -862,6 +1003,21 @@ function updateWindowTitle() {
     if (viewerName) {
         viewerName.textContent = displayTitle.toLowerCase() === 'untitled' ? 'untitled' : `${displayTitle}.scad`;
     }
+    updateViewerWorkspaceLabel();
+}
+
+// 3D viewer corner: workspace line above the filename. Only shown while link
+// sharing is active — with sharing off the answer is always "Main", so the
+// label would be noise. Called from updateWindowTitle (name/workspace
+// changes) and updateWorkspaceButtons (sharing enable/disable repaints).
+function updateViewerWorkspaceLabel() {
+    const label = document.getElementById('viewer-workspace-label');
+    if (!label) return;
+    const show = linkSharingActive();
+    label.textContent = show ? (getActiveWorkspace() === 'link' ? 'Link Workspace' : 'Main Workspace') : '';
+    label.style.display = show ? 'block' : 'none';
+    const viewerName = document.getElementById('viewer-project-name');
+    if (viewerName) viewerName.style.top = show ? '28px' : '10px';
 }
 
 if (projectNameInput) {
@@ -1023,11 +1179,15 @@ function setProjectionMode(ortho) {
         camera = perspCamera;
     }
     isOrthographic = ortho;
-    localStorage.setItem('openscad_projection', ortho ? 'orthographic' : 'perspective');
+    localStorage.setItem('openscad_projection', ortho ? 'orthogonal' : 'perspective');
+    if (btnProjection) {
+        btnProjection.textContent = ortho ? 'Orthogonal' : 'Perspective';
+        btnProjection.style.background = ortho ? '#6c757d' : '#3b82f6';
+    }
     controls.object = camera;
     controls.update();
     syncSmoothZoomTargets();
-    logToConsole(ortho ? '📐 Orthographic projection enabled.' : '📐 Perspective projection enabled.');
+    logToConsole(ortho ? '📐 Orthogonal projection enabled.' : '📐 Perspective projection enabled.');
 }
 
 // Projection-aware viewport update used by BOTH resize paths (window resize
@@ -1169,10 +1329,11 @@ function decodeModel(str) {
 // Parse the share hash into its params: #scad=<blob>[&pn=<name>] -> { scad, pn }.
 // Splitting on '&' is unambiguous: the blob's base64url alphabet is
 // [A-Za-z0-9-_] and encodeURIComponent escapes '&' inside names.
-function parseShareHash() {
+function parseShareHash(hashStr) {
+    const hash = (hashStr !== undefined) ? hashStr : window.location.hash;
     const parts = {};
-    if (!window.location.hash.startsWith('#')) return parts;
-    for (const seg of window.location.hash.slice(1).split('&')) {
+    if (!hash.startsWith('#')) return parts;
+    for (const seg of hash.slice(1).split('&')) {
         const eq = seg.indexOf('=');
         if (eq > 0) parts[seg.slice(0, eq)] = seg.slice(eq + 1);
     }
@@ -1188,6 +1349,15 @@ function sanitizeSharedProjectName(raw) {
     let name;
     try { name = decodeURIComponent(raw); } catch (e) { return ''; }
     return name.replace(/[\u0000-\u001F\u007F]/g, '').trim().slice(0, 80);
+}
+
+// Pull the '#scad=...' fragment out of arbitrary pasted text — a full URL
+// from any origin, a bare fragment, or junk-wrapped text. The domain is
+// irrelevant: the hash IS the data. Returns the fragment, or null.
+function extractShareHash(text) {
+    const idx = (text || '').indexOf('#scad=');
+    if (idx === -1) return null;
+    return text.slice(idx).split(/\s/)[0];
 }
 
 // ---- FILE OPERATIONS ----
@@ -1229,7 +1399,7 @@ function setWireframeMode(on) {
     localStorage.setItem('openscad_wireframe_mode', on ? 'enabled' : 'disabled');
     if (btnWireframe) {
         btnWireframe.textContent = on ? 'Wireframe' : 'Solid';
-        btnWireframe.style.background = on ? '#444' : '#007acc';
+        btnWireframe.style.background = on ? '#6c757d' : '#3b82f6';
     }
     applyWireframeToMesh();
     if (typeof refreshViewerToolbar === 'function') refreshViewerToolbar();
@@ -1276,6 +1446,7 @@ function applyWireframeToMesh() {
 }
 
 if (btnWireframe) btnWireframe.addEventListener('click', () => setWireframeMode(!wireframeMode));
+if (btnProjection) btnProjection.addEventListener('click', () => setProjectionMode(!isOrthographic));
 
 window.addEventListener('keydown', (event) => {
 	
@@ -1396,7 +1567,7 @@ if (btnExportFormat) {
         btnExportFormat.textContent = `${icon} ${fmt}`;
         
         // Blue = 3MF (carries color); neutral gray = STL (geometry only)
-        btnExportFormat.style.background = (fmt === '3MF') ? '#007acc' : '#6c757d';
+        btnExportFormat.style.background = (fmt === '3MF') ? '#3b82f6' : '#6c757d';
 
         // Toolbar Export button mirrors the target format as a two-liner
         // ("Export" / "to STL"), matching the New Window button's styling.
@@ -2617,7 +2788,8 @@ function ensureJSZipShim() {
 btnPreview.disabled = true; btnRender.disabled = true; btnExport.disabled = true;
 initOpenSCAD(); init3DWorkspace();
 window.switchWorkspace = switchWorkspace;   // temporary testing aid
-btnWireframe.style.background = '#007acc'; 
+btnWireframe.style.background = '#3b82f6'; 
+if (btnProjection) btnProjection.style.background = '#3b82f6';
 
 // 🕸📐 Apply persisted view-mode settings. Written by setWireframeMode /
 // setProjectionMode, swept into backups like every other openscad_* key.
@@ -2625,7 +2797,7 @@ btnWireframe.style.background = '#007acc';
 // after the default btnWireframe styling above. Both are no-ops when the
 // stored value matches the defaults (solid / perspective / key absent).
 if (localStorage.getItem('openscad_wireframe_mode') === 'enabled') setWireframeMode(true);
-if (localStorage.getItem('openscad_projection') === 'orthographic') setProjectionMode(true);
+if (localStorage.getItem('openscad_projection') === 'orthogonal') setProjectionMode(true);
 
 // ==========================================================================
 // ⚙️ SETTINGS & MANAGER MODALS
@@ -3246,6 +3418,7 @@ function closeAllMenus() {
     if (stlsOverlay) stlsOverlay.classList.add('hidden');
     if (svgsOverlay) svgsOverlay.classList.add('hidden');
     if (licensesOverlay) licensesOverlay.classList.add('hidden');
+    if (typeof loadOverlay !== 'undefined' && loadOverlay) loadOverlay.classList.add('hidden');
     if (typeof libsOverlay !== 'undefined' && libsOverlay) libsOverlay.classList.add('hidden');
     if (typeof openFilesOverlay !== 'undefined' && openFilesOverlay) openFilesOverlay.classList.add('hidden');
 	if (typeof helpOverlay !== 'undefined' && helpOverlay) helpOverlay.classList.add('hidden');
@@ -3267,7 +3440,7 @@ window.addEventListener('keydown', (event) => {
             if (btnConfirmNo) btnConfirmNo.click();
             return;
         }
-        const isAnyOpen = [settingsOverlay, fontsOverlay, stlsOverlay, svgsOverlay, licensesOverlay, helpOverlay, libsOverlay, openFilesOverlay].some(el => el && !el.classList.contains('hidden'));
+        const isAnyOpen = [settingsOverlay, fontsOverlay, stlsOverlay, svgsOverlay, licensesOverlay, helpOverlay, libsOverlay, openFilesOverlay, loadOverlay].some(el => el && !el.classList.contains('hidden'));
         if (isAnyOpen) { logToConsole('⌨️ Hotkey Triggered: [Escape] - Closing Overlays'); closeAllMenus(); }
     }
 });
@@ -3322,7 +3495,7 @@ if (btnSettings) btnSettings.addEventListener('click', () => settingsOverlay.cla
 if (btnCloseSettings) btnCloseSettings.addEventListener('click', closeAllMenus);
 
 window.addEventListener('click', (event) => {
-    if (event.target === settingsOverlay || event.target === fontsOverlay || event.target === stlsOverlay || event.target === svgsOverlay) closeAllMenus();
+    if (event.target === settingsOverlay || event.target === fontsOverlay || event.target === stlsOverlay || event.target === svgsOverlay || event.target === loadOverlay) closeAllMenus();
 });
 
 window.addEventListener('keydown', (event) => {
@@ -3525,7 +3698,7 @@ async function renderUserFilesManagerList() {
         nameLabel.title = new Date(f.modified).toLocaleString();
         nameLabel.style.overflow = 'hidden'; nameLabel.style.textOverflow = 'ellipsis'; nameLabel.style.whiteSpace = 'nowrap'; nameLabel.style.flex = '1'; nameLabel.style.color = '#ddd';
 
-        const openBtn = document.createElement('button'); openBtn.textContent = 'Open'; openBtn.style.background = '#007acc'; openBtn.style.color = '#fff'; openBtn.style.padding = '2px 9px'; openBtn.style.fontSize = '0.75rem'; openBtn.style.borderRadius = '3px'; openBtn.style.cursor = 'pointer'; openBtn.style.fontWeight = 'bold';
+        const openBtn = document.createElement('button'); openBtn.textContent = 'Open'; openBtn.style.background = '#3b82f6'; openBtn.style.color = '#fff'; openBtn.style.padding = '2px 9px'; openBtn.style.fontSize = '0.75rem'; openBtn.style.borderRadius = '3px'; openBtn.style.cursor = 'pointer'; openBtn.style.fontWeight = 'bold';
         openBtn.addEventListener('click', async () => {
             if (editorDirty) {
                 const ok = await showConfirm('Open file?', `Opening "${f.name}" replaces the editor contents. Unsaved buffer changes will be lost.`, 'Open');

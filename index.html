@@ -70,26 +70,37 @@
             pointer-events: none; user-select: none;
             -webkit-user-select: none;
         }
+        #viewer-workspace-label {
+            /* Sits just above #viewer-project-name (same stacking rationale).
+               Hidden unless link sharing is active — JS toggles display and
+               shifts the project name down to make room.  Alpha changed from 0.4 to 0.55, size from 0.7 to 0.85 */
+            position: absolute; top: 10px; left: 10px; z-index: 10;
+            color: rgba(200, 200, 200, 0.55);
+            font-family: monospace;
+            font-size: 0.85rem; letter-spacing: 0.08em;
+            pointer-events: none; user-select: none;
+            -webkit-user-select: none;
+            display: none;
+        }
         body, html { margin: 0; padding: 0; height: 100%; font-family: sans-serif; background: #222; color: #fff; overflow: hidden; }
         
         .app-container { display: flex; height: 100vh; width: 100vw; }
         .left-panel { width: 50%; min-width: 15%; max-width: 85%; display: flex; flex-direction: column; }
         .split-gutter { width: 8px; background: #111; cursor: col-resize; position: relative; z-index: 10; flex-shrink: 0; transition: background 0.15s ease; border-left: 1px solid #333; border-right: 1px solid #333; }
-        .split-gutter:hover, .split-gutter:active { background: #007acc; }
+        .split-gutter:hover, .split-gutter:active { background: #3b82f6; }
         .console-gutter { height: 6px; background: #111; cursor: row-resize; flex-shrink: 0; border-top: 1px solid #333; border-bottom: 1px solid #333; transition: background 0.15s ease; }
-        .console-gutter:hover, .console-gutter:active { background: #007acc; }        
+        .console-gutter:hover, .console-gutter:active { background: #3b82f6; }        
         .right-panel { flex-grow: 1; height: 100vh; display: flex; flex-direction: column; background: #222; position: relative; overflow: hidden; }
         
         .toolbar { padding: 10px; background: #111; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        button { background: #007acc; color: white; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 0.9rem; }
-        button:hover { background: #0062a3; }
+        button { background: #3b82f6; color: white; border: none; padding: 8px 14px; font-weight: bold; cursor: pointer; border-radius: 4px; font-size: 0.9rem; }
+        button:hover:not(:disabled):not(.vbtn) { filter: brightness(1.2); }
         button:disabled { background: #444; color: #888; cursor: not-allowed; }
         /* Workspace toolbar buttons: smaller font, fixed height so single-line
            and two-line (link sharing) buttons all match exactly. Overlay
            buttons are unaffected. */
         .toolbar button { font-size: 0.8rem; height: 33px; padding: 0 10px; }
         .file-btn { background: #444; }
-        .file-btn:hover { background: #555; }
         
         .editor-wrapper { flex: 1 1 0; min-height: 0; display: flex; background: #1e1e1e; overflow: hidden; position: relative; }
         
@@ -215,7 +226,7 @@ function toggleHelpSection(id, link) {
             <div class="toolbar">
                 <button class="file-btn" id="btn-new-window" style="font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">New<br>Window</button>
                 <input type="file" id="file-load" style="display:none;" accept=".scad">
-                <button class="file-btn" onclick="document.getElementById('file-load').click()">Load</button>
+                <button id="btn-load-main" class="file-btn">Load</button>
                 <button class="file-btn" id="btn-open" style="font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">App<br>Files</button>
                 <button class="file-btn" id="btn-save-appfs">Save</button>
                 <button class="file-btn" id="btn-save">Download</button>
@@ -228,7 +239,7 @@ function toggleHelpSection(id, link) {
                 
                 <button id="btn-preview" style="margin-left: auto; background: #ffc107; color: #000;">Preview</button>
                 <button id="btn-render" style="background: #28a745;" disabled>Render</button>
-                <button id="btn-export" style="background: #007acc; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;" disabled>Export<br>to STL</button>
+                <button id="btn-export" style="background: #3b82f6; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;" disabled>Export<br>to STL</button>
                 <button id="btn-update-link" style="display: none; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px; background: #8b5cf6;">Update<br>Link</button>
             </div>
             
@@ -246,11 +257,12 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
 
         <div class="right-panel">
             <div id="placeholder-text" style="display: none;"></div>
+            <div id="viewer-workspace-label"></div>
             <div id="viewer-project-name"></div>
             <div id="viewer-toolbar">
                 <button class="vbtn" id="vb-ellipsis" title="Show / hide view tools"><img src="./images/ellipsis_btn.png" alt=""></button>
                 <div id="viewer-toolbar-extra">
-                    <button class="vbtn" id="vb-projection" title="Perspective / Orthographic projection"><img src="./images/ortho_btn.png" alt=""></button>
+                    <button class="vbtn" id="vb-projection" title="Perspective / Orthogonal projection"><img src="./images/ortho_btn.png" alt=""></button>
                     <button class="vbtn" id="vb-reset" title="Reset camera view"><img src="./images/reset_btn.png" alt=""></button>
                     <button class="vbtn" id="vb-axes" title="Toggle axes"><img src="./images/axes_btn.png" alt=""></button>
                     <button class="vbtn" id="vb-grid" title="Toggle grid"><img src="./images/grid_btn.png" alt=""></button>
@@ -279,17 +291,46 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <li><code>[Ctrl]</code> + <code>[O]</code> : Open from App Files</li>
                     </ul>
 
-                    <h3 style="margin-bottom: 8px;">Link Sharing, Workspaces, and Multiple Instances <a href="#" onclick="toggleHelpSection('link-sharing-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
+                    <h3 style="margin-bottom: 8px;">App Files, and Loading vs. Opening <a href="#" onclick="toggleHelpSection('app-files-body', this); return false;" style="font-size: 0.8rem; color: #3b82f6; margin-left: 8px;">[Show]</a></h3>
+                    <div id="app-files-body" style="display: none;">
+                        <p style="color: #ccc;">
+                        App Files is SCADLite's built-in storage for your .scad files, kept inside the app rather than on disk. Save the editor's contents there with the Save button or <code>[Ctrl]</code> + <code>[S]</code> (Save As when untitled), and bring files back with the App Files button or <code>[Ctrl]</code> + <code>[O]</code>. Every file stored in App Files is also visible to the compiler, so files can reference each other with <code>include &lt;myutils.scad&gt;</code> or <code>use &lt;parts.scad&gt;</code> exactly as they would on desktop OpenSCAD with files sitting side by side. That makes modular projects possible: keep shared modules in App Files and include them from whatever you're working on. App Files also offers Download All to save everything to a single zip file.
+                        </p>
+                        <p style="color: #ccc;">
+                        The naming convention throughout the app: <b>Open</b> means retrieving a file from App Files, while <b>Load</b> means bringing code in from an external source, either a .scad file on your computer or a shared link. Loading from disk places the file's code in the editor and names the project after the file, but nothing is stored in App Files until you Save it there. Normally the Load button goes straight to a file picker; when Link Sharing is enabled it instead opens a small Load menu offering both paths, loading from disk or pasting a shared link. Download, by contrast, writes the editor's current code out to a .scad file on your computer.
+                        </p>
+                    </div>
+
+                    <h3 style="margin-bottom: 8px;">Workspace Settings <a href="#" onclick="toggleHelpSection('ws-settings-body', this); return false;" style="font-size: 0.8rem; color: #3b82f6; margin-left: 8px;">[Show]</a></h3>
+                    <div id="ws-settings-body" style="display: none;">
+                        <p style="color: #ccc;">
+                        The Project Name at the top names your current work: it becomes the filename for saves, downloads, and exports, and is displayed at the top-left of the 3D view. When Link Sharing is enabled, each workspace keeps its own project name, and the name travels along with shared links. Project names and editor contents persist across sessions while Recover Last Workspaces is enabled; disabling it starts every session fresh with a blank editor.
+                        </p>
+                        <p style="color: #ccc;">
+                        The left column collects editor and readout preferences: editor font size, line numbers, brace matching, line highlighting, console visibility and debug verbosity, and the grid and axes with their step, range, and style controls. The right column controls the 3D view: Reset View re-frames the camera, Zoom Settings tune zoom feel, and Model View pairs the projection toggle (Perspective or Orthogonal) with the rendering toggle (Solid or Wireframe); both are remembered across sessions. The Model Color button doubles as a swatch, always showing the current model color. Export Format switches exports between STL and 3MF.
+                        </p>
+                        <p style="color: #ccc;">
+                        The manager buttons (Custom Fonts, STL Imports, SVG Imports, Libraries) let you upload external resources, fonts for <code>text()</code>, STL and SVG files for <code>import()</code>, and OpenSCAD libraries, all stored inside the app and available to your code by filename. See the Compatibility Notes below for format details.
+                        </p>
+                        <p style="color: #ccc;">
+                        Backup All Data downloads a single zip containing everything the app stores: App Files, libraries, fonts, STL and SVG imports, every setting, and the current editor contents. Restore Backup does the reverse, and is a full mirror operation: it <b>erases all current data</b> and replaces it with the backup's contents, after a confirmation prompt, then reloads the app. Together they make SCADLite portable across machines, browser profiles, and reinstalls, which is especially useful in environments where browser storage gets wiped.
+                        </p>
+                    </div>
+
+                    <h3 style="margin-bottom: 8px;">Link Sharing, Workspaces, and Multiple Instances <a href="#" onclick="toggleHelpSection('link-sharing-body', this); return false;" style="font-size: 0.8rem; color: #3b82f6; margin-left: 8px;">[Show]</a></h3>
                     <div id="link-sharing-body" style="display: none;">
                         <p style="color: #ccc;">
-                        Link sharing can be enabled in Workspace Settings. Enabling it gives you a second workspace, the Link Workspace, in addition to the Main Workspace. Workspaces can be toggled between freely. Code written in either workspace persists in local storage, written on a per keystroke basis.  However, opening a URL containing an encoded model will overwrite the Link Workspace. When Link Sharing is enabled in settings, use the Share Link button to encode your current model into a URL and copy it to your clipboard for sharing. Note that complex models may run into problems, since URL parameters are limited in length. Link sharing is best suited for smaller models or demo purposes, not as a primary save method. Also, sharing a link while the Main Workspace is selected will overwrite the Link Workspace with the Main Workspace's code.
+                        Link sharing can be enabled in Workspace Settings. Enabling it gives you a second workspace, the Link Workspace, in addition to the Main Workspace. Workspaces can be toggled between freely. Code written in either workspace persists in local storage, written on a per keystroke basis.  However, opening a URL containing an encoded model will overwrite the Link Workspace. When Link Sharing is enabled in settings, use the Update Link button to encode your current model into a URL and copy it to your clipboard for sharing. If the project has a name, the name is carried along in the link as well. Note that complex models may run into problems, since URL parameters are limited in length. Link sharing is best suited for smaller models or demo purposes, not as a primary save method. Also, sharing a link while the Main Workspace is selected will overwrite the Link Workspace with the Main Workspace's code.
+                        </p>
+                        <p style="color: #ccc;">
+                        To open a shared link you've received without leaving the app, which is especially useful in the installed PWA where there is no address bar, use the Load Shared Link button next to the Link Sharing toggle, or the Load button's menu once Link Sharing is enabled, and paste the link there. Pasting a full URL or just the <code>#scad=</code> portion both work. Loading a link this way enables Link Sharing automatically if it wasn't already on.
                         </p>
                         <p style="color: #ccc;">
                         Multiple instances of the page/PWA can be open at once, but the Main and Link workspaces are shared, global storage, not separate per instance. Each new instance loads whichever version of the workspaces most recently saved. If you work with multiple instances open simultaneously, only the last modified code editor caches will be written to storage. Thus, an earlier instance's unsaved changes can be silently lost, even if that instance is still open.  The moment a page refreshes, reloads, or a new instance is opened, it will pull the shared storage's current contents from the last instance that had code edited. If you need to work on more than one model at a time, save each to a .scad file as needed rather than relying on the workspace storage caches to hold multiple versions. Code is retained independently in each instance's code editor while that instance stays open, so multiple instances can be used simultaneously.  Though when using multiple instances, avoid refreshing the instance you're relying on until you've saved your work as a .scad file.  Note that [F5] keypresses are intercepted to perform a Preview operation, as opposed to refreshing.  Though refreshing is still possible via right-click context menu or with [Ctrl] + [R] when using Firefox, so care is needed to not refresh the page unintentionally.
                         </p>
                     </div>
 
-                    <h3 style="margin-bottom: 8px;">Compatibility Notes <a href="#" onclick="toggleHelpSection('compat-note-body', this); return false;" style="font-size: 0.8rem; color: #007acc; margin-left: 8px;">[Show]</a></h3>
+                    <h3 style="margin-bottom: 8px;">Compatibility Notes <a href="#" onclick="toggleHelpSection('compat-note-body', this); return false;" style="font-size: 0.8rem; color: #3b82f6; margin-left: 8px;">[Show]</a></h3>
                     <div id="compat-note-body" style="display: none;">
 
                         <!-- Note 1: STL import format -->
@@ -418,11 +459,11 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     <br><br><br>
                     <p style="font-size: 0.8rem; color: #888;">
                         The OpenSCAD Cheat Sheet content was adapted from the 
-                        <a href="https://openscad.org/cheatsheet/" style="color: #007acc;" target="_blank">OpenSCAD CheatSheet</a> 
-                        written by <a href="http://www.peteruithoven.nl" style="color: #007acc;" target="_blank">Peter Uithoven</a> 
-                        at <a href="http://www.fablabamersfoort.nl" style="color: #007acc;" target="_blank">Fablab Amersfoort</a>, 
+                        <a href="https://openscad.org/cheatsheet/" style="color: #3b82f6;" target="_blank">OpenSCAD CheatSheet</a> 
+                        written by <a href="http://www.peteruithoven.nl" style="color: #3b82f6;" target="_blank">Peter Uithoven</a> 
+                        at <a href="http://www.fablabamersfoort.nl" style="color: #3b82f6;" target="_blank">Fablab Amersfoort</a>, 
                         and is licensed under 
-                        <a href="http://freedomdefined.org/Licenses/CC-BY" style="color: #007acc;" target="_blank">CC-BY</a>.
+                        <a href="http://freedomdefined.org/Licenses/CC-BY" style="color: #3b82f6;" target="_blank">CC-BY</a>.
                     </p>
                     
                 </div>
@@ -526,10 +567,13 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         </div>
                     </div>
 
-                    <div class="settings-group">
-                        <label style="font-size: 0.9rem; color: #aaa;">Link Sharing:</label>
-                        <button id="btn-toggle-link-sharing" class="file-btn" style="width: 120px; background: #dc3545;">Disabled</button>
-                    </div>
+					<div class="settings-group">
+						<label style="font-size: 0.9rem; color: #aaa;">Link Sharing:</label>
+						<div style="display: flex; gap: 8px; align-items: center;">
+							<button id="btn-toggle-link-sharing" class="file-btn" style="width: 120px; background: #dc3545;">Disabled</button>
+							<button id="btn-load-shared-link" class="file-btn" style="width: 100px; background: #6c757d; font-size: 0.7rem; line-height: 1.1; padding: 4px 8px;">Load Shared<br>Link</button>
+						</div>
+					</div>
 
                     <div class="settings-group">
                         <label style="font-size: 0.9rem; color: #aaa;">Recover Last Workspaces:</label>
@@ -559,7 +603,10 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
 
                     <div class="settings-group">
                         <label style="font-size: 0.9rem; color: #aaa;">Model View:</label>
-                        <button id="btn-wireframe" class="file-btn" style="width: 120px;">Solid</button>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button id="btn-projection" class="file-btn" style="width: 115px;">Perspective</button>
+                            <button id="btn-wireframe" class="file-btn" style="width: 105px;">Solid</button>
+                        </div>
                     </div>
 
                     <div class="settings-group">
@@ -577,10 +624,10 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                     <div style="display: flex; flex-direction: column; gap: 8px;">
                         <!-- Manage buttons: 2x2 grid (equal columns) to save vertical space -->
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-                            <button id="btn-open-fonts-menu" class="file-btn" style="width: 100%; background: #007acc;">🔤 Custom Fonts</button>
-                            <button id="btn-open-stls-menu" class="file-btn" style="width: 100%; background: #007acc;">🌐 STL Imports</button>
-                            <button id="btn-open-svgs-menu" class="file-btn" style="width: 100%; background: #007acc;">📐 SVG Imports</button>
-                            <button id="btn-open-libs-menu" class="file-btn" style="width: 100%; background: #007acc;">📚 Libraries</button>
+                            <button id="btn-open-fonts-menu" class="file-btn" style="width: 100%; background: #3b82f6;">🔤 Custom Fonts</button>
+                            <button id="btn-open-stls-menu" class="file-btn" style="width: 100%; background: #3b82f6;">🌐 STL Imports</button>
+                            <button id="btn-open-svgs-menu" class="file-btn" style="width: 100%; background: #3b82f6;">📐 SVG Imports</button>
+                            <button id="btn-open-libs-menu" class="file-btn" style="width: 100%; background: #3b82f6;">📚 Libraries</button>
                             <button id="btn-backup-all" class="file-btn" style="width: 100%; background: #4db1b3;">💾 Backup All Data</button>
                             <button id="btn-restore-all" class="file-btn" style="width: 100%; background: #b34da7;">📥 Restore Backup</button>
                         </div>
@@ -589,6 +636,29 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                         <button id="btn-open-licenses-menu" class="file-btn" style="width: 100%; background: #d97706;">📜 Credits & Licenses</button>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="load-overlay" class="overlay hidden">
+        <div class="overlay-content" style="width: 480px; max-width: 95vw;">
+            <button id="btn-close-load" class="close-btn" style="font-size: 16px; font-weight: bold; padding: 4px;">&#8592; Back</button>
+            <h3 style="margin-top: 0; margin-bottom: 15px; font-size: 1.2rem;">Load Model</h3>
+            <hr style="border: 0; border-top: 1px solid #333; margin-bottom: 20px;">
+
+            <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
+                <button id="btn-load-from-disk" type="button" class="file-btn" style="width: 100%; background: #3b82f6; margin-bottom: 8px;">&#128196; Load SCAD from Disk (.scad)</button>
+
+                <hr style="border: 0; border-top: 1px solid #333; width: 100%; margin: 4px 0 10px 0;">
+
+                <label style="font-size: 0.9rem; color: #aaa;">Load SCAD from Shared Link:</label>
+                <input type="text" id="shared-link-input" placeholder="Paste a SCADLite share link here&hellip;" spellcheck="false" autocomplete="off"
+                    style="width: 100%; box-sizing: border-box; background: #111; border: 1px solid #333; border-radius: 4px; color: #ddd; padding: 8px; font-size: 0.85rem;">
+                <div style="display: flex; gap: 8px; width: 100%;">
+                    <button id="btn-paste-shared-link" type="button" class="file-btn" style="flex: 1; background: #6c757d;">&#128203; Paste from Clipboard</button>
+                    <button id="btn-load-shared-link-exec" type="button" class="file-btn" style="flex: 1; background: #8b5cf6;">&#128279; Load Link</button>
+                </div>
+                <div style="font-size: 0.78rem; color: #888; line-height: 1.35;">Loading a shared link replaces the Link Sharing workspace's contents and switches to it. Link Sharing is enabled automatically if needed.</div>
             </div>
         </div>
     </div>
@@ -602,7 +672,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
             <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
                 <input type="file" id="font-upload" accept=".ttf,.otf" style="display:none;">
                 <button type="button" class="file-btn" onclick="document.getElementById('font-upload').click()" 
-                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install Font File (.ttf / .otf)</button>
+                    style="width: 100%; background: #3b82f6; margin-bottom: 8px;">＋ Install Font File (.ttf / .otf)</button>
 
                 <div id="custom-fonts-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
                     </div>
@@ -619,7 +689,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
             <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
                 <input type="file" id="stl-upload" accept=".stl" style="display:none;">
                 <button type="button" class="file-btn" onclick="document.getElementById('stl-upload').click()" 
-                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install STL File (.stl)</button>
+                    style="width: 100%; background: #3b82f6; margin-bottom: 8px;">＋ Install STL File (.stl)</button>
 
                 <div id="custom-stls-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
                     </div>
@@ -639,7 +709,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
                 <button id="btn-userfile-save" class="file-btn" style="background: #28a745;">Save As</button>
             </div>
             <div id="custom-userfiles-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;"></div>
-            <button id="btn-download-all-zip" class="file-btn" style="width: 100%; background: #444;">⬇ Download All (.zip)</button>
+            <button id="btn-download-all-zip" class="file-btn" style="width: 100%; background: #6c757d;">⬇ Download All (.zip)</button>
         </div>
     </div>
 </div>
@@ -663,7 +733,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
         <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
             <input type="file" id="lib-upload" accept=".zip" style="display:none;">
             <button type="button" class="file-btn" onclick="document.getElementById('lib-upload').click()"
-                style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install Library (.zip)</button>
+                style="width: 100%; background: #3b82f6; margin-bottom: 8px;">＋ Install Library (.zip)</button>
             <div id="custom-libs-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;"></div>
         </div>
     </div>
@@ -678,7 +748,7 @@ with Extensive AI Assistance from Google Gemini & Anthropic Claude</div>
             <div class="settings-group" style="flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 0;">
                 <input type="file" id="svg-upload" accept=".svg" style="display:none;">
                 <button type="button" class="file-btn" onclick="document.getElementById('svg-upload').click()" 
-                    style="width: 100%; background: #007acc; margin-bottom: 8px;">＋ Install SVG Vector File (.svg)</button>
+                    style="width: 100%; background: #3b82f6; margin-bottom: 8px;">＋ Install SVG Vector File (.svg)</button>
 
                 <div id="custom-svgs-manager-list" style="width: 100%; height: 210px; overflow-y: auto; background: #111; border: 1px solid #333; border-radius: 4px; padding: 2px;">
                     </div>
